@@ -1,0 +1,548 @@
+<!-- 
+  MarketAI — BTC / ETH / Gold analysis + AI trader chat (PWA-ready)
+  ARTIFACT vs TỰ HOST:
+   - Artifact (claude.ai) KHÔNG cho localStorage & KHÔNG cài PWA được -> dùng biến session.
+   - Khi tự host trên GitHub Pages: tìm các comment "TỰ HOST" và làm theo (bật localStorage, thêm manifest + sw + icon.png).
+  Mặc định: LIGHT mode.
+-->
+<div id="app">
+  <header class="topbar">
+    <div class="brand"><span class="logo">◆</span><span class="brand-name">Market<span class="accent">AI</span></span></div>
+    <div class="top-actions">
+      <button id="refreshBtn" class="icon-btn" title="Cập nhật">↻</button>
+      <button id="themeBtn" class="icon-btn" title="Sáng/Tối">☾</button>
+      <button id="settingsBtn" class="icon-btn" title="Cài đặt">⚙</button>
+    </div>
+  </header>
+
+  <!-- Settings modal -->
+  <div id="settingsModal" class="modal-bg">
+    <div class="modal">
+      <div class="modal-head"><h3>⚙ Cài đặt</h3><button id="closeSettings" class="icon-btn">✕</button></div>
+      <label class="field-label">🔑 Gemini API Key</label>
+      <div class="key-row">
+        <input id="keyInput" type="password" placeholder="Dán key vào đây..." />
+        <button id="keyToggle" class="icon-btn sm" title="Hiện/ẩn">👁</button>
+      </div>
+      <div id="keyStatus" class="key-status"></div>
+      <p class="hint">Dán 1 lần, key được lưu tự động cho lần sau. Khi tự host, key chỉ lưu trên máy bạn.</p>
+      <button id="keySave" class="btn-primary full">Lưu key</button>
+    </div>
+  </div>
+
+  <section class="cards" id="cards"></section>
+
+  <!-- Quy trình phân tích -->
+  <section class="panel run-panel">
+    <button id="startBtn" class="btn-start">⚡ BẮT ĐẦU PHÂN TÍCH</button>
+    <div id="pipeline" class="pipeline"></div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Biểu đồ giá</h2>
+      <div class="seg" id="assetSeg"></div>
+    </div>
+    <div class="seg tf" id="tfSeg"></div>
+    <div class="chart-wrap"><canvas id="chart"></canvas></div>
+  </section>
+
+  <div class="grid-2">
+    <section class="panel">
+      <div class="panel-head"><h2>Tin tức ảnh hưởng giá</h2><span class="muted" id="newsDate"></span></div>
+      <div id="news" class="news-list"><div class="empty">Lưu Gemini key trong ⚙ rồi nhấn “Phân tích AI”.</div></div>
+    </section>
+    <section class="panel">
+      <div class="panel-head"><h2>Phân tích & Chiến lược</h2><button id="analyzeBtn" class="btn-primary sm">Phân tích AI</button></div>
+      <div id="analysis" class="analysis"><div class="empty">Chưa có phân tích.</div></div>
+    </section>
+  </div>
+
+  <!-- Lời khuyên tổng hợp -->
+  <section class="panel verdict-panel" id="verdictPanel" style="display:none">
+    <div class="panel-head"><h2>🎯 Lời khuyên tổng hợp</h2></div>
+    <div id="verdict" class="verdict"></div>
+  </section>
+
+  <!-- AI Chat -->
+  <section class="panel">
+    <div class="panel-head"><h2>💬 Hỏi chuyên gia AI</h2><button id="chatClear" class="icon-btn sm" title="Xóa">🗑</button></div>
+    <div id="chatBox" class="chat-box">
+      <div class="chat-msg ai"><div class="bubble">Tôi là chuyên gia phân tích BTC, ETH, Vàng — tối ưu cho quyết định tỉ lệ thắng cao nhất. Hỏi tôi bất cứ điều gì về thị trường.</div></div>
+    </div>
+    <div class="chat-input">
+      <input id="chatText" placeholder="Hỏi về điểm vào lệnh, xu hướng, quản lý vốn..." />
+      <button id="chatSend" class="btn-primary sm">Gửi</button>
+    </div>
+  </section>
+
+  <div class="disclaimer">⚠️ <b>Miễn trừ trách nhiệm:</b> Phân tích & chiến lược chỉ mang tính tham khảo, KHÔNG phải lời khuyên đầu tư. Thị trường biến động cao, không gì đảm bảo thắng. Bạn tự chịu trách nhiệm cho quyết định của mình.</div>
+  <footer class="foot">MarketAI · CoinGecko + gold-api · Gemini 2.5 Flash</footer>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script>
+let sessionKey="", theme="dark", currentAsset="bitcoin";
+const ASSETS={
+  bitcoin:{label:"Bitcoin",sym:"BTC",color:"#f7931a"},
+  ethereum:{label:"Ethereum",sym:"ETH",color:"#627eea"},
+  gold:{label:"Vàng",sym:"XAU",color:"#d4af37"}
+};
+// Khung phút (Binance) + khung ngày (CoinGecko). src: 'binance' | 'cg'
+const TFS={
+  "1m":{label:"1m",src:"binance",interval:"1m",limit:120},
+  "5m":{label:"5m",src:"binance",interval:"5m",limit:120},
+  "15m":{label:"15m",src:"binance",interval:"15m",limit:96},
+  "1h":{label:"1h",src:"binance",interval:"1h",limit:120},
+  "4h":{label:"4h",src:"binance",interval:"4h",limit:120},
+  "24h":{label:"24h",src:"binance",interval:"15m",limit:96},
+  "7":{label:"7D",src:"cg",days:"7"},
+  "30":{label:"30D",src:"cg",days:"30"},
+  "365":{label:"1Y",src:"cg",days:"365"}
+};
+const BINANCE_SYM={bitcoin:"BTCUSDT",ethereum:"ETHUSDT"};
+let priceData={}, chartObj=null, chatHistory=[];
+let currentTF="1m";
+const $=s=>document.querySelector(s);
+const fmtUSD=n=>n==null?"—":"$"+Number(n).toLocaleString("en-US",{maximumFractionDigits:n<10?4:2});
+const fmtPct=n=>n==null?"":(n>=0?"+":"")+n.toFixed(2)+"%";
+
+// PRICES
+async function loadPrices(){
+  try{
+    const cg=await fetch("https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum&price_change_percentage=24h").then(r=>r.json());
+    for(const c of cg) priceData[c.id]={price:c.current_price,change24h:c.price_change_percentage_24h};
+  }catch(e){console.error(e);}
+  try{
+    const g=await fetch("https://api.gold-api.com/price/XAU").then(r=>r.json());
+    priceData.gold={price:g.price,change24h:null};
+  }catch(e){priceData.gold=priceData.gold||{price:null,change24h:null};}
+  renderCards();
+}
+
+// CHART (multi timeframe: Binance phút + CoinGecko ngày)
+async function loadChart(){
+  const a=ASSETS[currentAsset];
+  const ctx=$("#chart").getContext("2d");
+  if(chartObj) chartObj.destroy();
+  let series=[];
+  if(currentAsset==="gold"){
+    drawEmpty(ctx,"Vàng: API free không hỗ trợ lịch sử theo khung giờ");
+    return;
+  }
+  const tf=TFS[currentTF];
+  try{
+    if(tf.src==="binance"){
+      const url=`https://api.binance.com/api/v3/klines?symbol=${BINANCE_SYM[currentAsset]}&interval=${tf.interval}&limit=${tf.limit}`;
+      const k=await fetch(url).then(r=>r.json());
+      series=k.map(c=>({t:c[0],v:parseFloat(c[4])})); // close
+    }else{
+      const url=`https://api.coingecko.com/api/v3/coins/${currentAsset}/market_chart?vs_currency=usd&days=${tf.days}`;
+      const j=await fetch(url).then(r=>r.json());
+      series=(j.prices||[]).map(p=>({t:p[0],v:p[1]}));
+    }
+  }catch(e){ drawEmpty(ctx,"Không tải được dữ liệu"); return; }
+  if(!series.length){ drawEmpty(ctx,"Không có dữ liệu"); return; }
+  const css=getComputedStyle(document.body);
+  const grid=css.getPropertyValue("--grid").trim(), txt=css.getPropertyValue("--muted").trim();
+  const grad=ctx.createLinearGradient(0,0,0,300);
+  grad.addColorStop(0,a.color+"55"); grad.addColorStop(1,a.color+"00");
+  const isMin=tf.src==="binance";
+  const labels=series.map(p=>{
+    const d=new Date(p.t);
+    return isMin?d.toLocaleTimeString("vi-VN",{hour:"2-digit",minute:"2-digit"}):d.toLocaleDateString("vi-VN",{day:"2-digit",month:"2-digit"});
+  });
+  chartObj=new Chart(ctx,{type:"line",
+    data:{labels,datasets:[{data:series.map(p=>p.v),borderColor:a.color,backgroundColor:grad,fill:true,tension:.3,pointRadius:0,borderWidth:2}]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{mode:"index",intersect:false,callbacks:{label:c=>fmtUSD(c.parsed.y)}}},
+      scales:{x:{grid:{display:false},ticks:{color:txt,maxTicksLimit:6,font:{size:10}}},y:{position:"right",grid:{color:grid},ticks:{color:txt,callback:v=>fmtUSD(v)}}}}
+  });
+}
+function drawEmpty(ctx,msg){ const css=getComputedStyle(document.body); ctx.clearRect(0,0,ctx.canvas.width,ctx.canvas.height); ctx.fillStyle=css.getPropertyValue("--muted").trim(); ctx.font="13px sans-serif"; ctx.fillText(msg,20,140); }
+
+// RENDER cards / segs
+function renderCards(){
+  $("#cards").innerHTML=Object.keys(ASSETS).map(k=>{
+    const a=ASSETS[k],d=priceData[k]||{},up=(d.change24h||0)>=0;
+    return `<div class="card ${currentAsset===k?'active':''}" data-asset="${k}">
+      <div class="card-top"><span class="dot" style="background:${a.color}"></span>${a.label}<span class="sym">${a.sym}</span></div>
+      <div class="card-price">${fmtUSD(d.price)}</div>
+      <div class="card-chg ${d.change24h==null?'':(up?'up':'down')}">${d.change24h==null?'24h: —':fmtPct(d.change24h)}</div>
+    </div>`;}).join("");
+  document.querySelectorAll(".card").forEach(c=>c.onclick=()=>{currentAsset=c.dataset.asset;renderCards();renderSeg();renderTF();loadChart();});
+}
+function renderSeg(){
+  $("#assetSeg").innerHTML=Object.keys(ASSETS).map(k=>`<button class="${currentAsset===k?'on':''}" data-a="${k}">${ASSETS[k].sym}</button>`).join("");
+  document.querySelectorAll("#assetSeg button").forEach(b=>b.onclick=()=>{currentAsset=b.dataset.a;renderCards();renderSeg();renderTF();loadChart();});
+}
+function renderTF(){
+  // Vàng không có lịch sử -> ẩn thanh khung giờ
+  if(currentAsset==="gold"){ $("#tfSeg").style.display="none"; return; }
+  $("#tfSeg").style.display="flex";
+  $("#tfSeg").innerHTML=Object.keys(TFS).map(k=>`<button class="${currentTF===k?'on':''}" data-tf="${k}">${TFS[k].label}</button>`).join("");
+  document.querySelectorAll("#tfSeg button").forEach(b=>b.onclick=()=>{currentTF=b.dataset.tf;renderTF();loadChart();});
+}
+
+// GEMINI
+const PERSONA="Bạn là chuyên gia phân tích & giao dịch BTC, ETH, Vàng dày dạn kinh nghiệm, phân tích sắc bén, quyết đoán, luôn tối ưu cho quyết định có tỉ lệ thắng cao nhất có thể dựa trên kỹ thuật, dòng tiền và bối cảnh vĩ mô. Trả lời tự tin, đi thẳng vấn đề, có lý do rõ ràng và luôn kèm quản lý rủi ro (điểm cắt lỗ). Tuyệt đối không bịa con số tỉ lệ thắng cụ thể; trung thực rằng thị trường luôn có rủi ro.";
+async function callGemini(prompt,wantJson,system){
+  if(!sessionKey) throw new Error("NO_KEY");
+  const url=`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${sessionKey}`;
+  const body={contents:[{parts:[{text:prompt}]}]};
+  if(system) body.systemInstruction={parts:[{text:system}]};
+  if(wantJson) body.generationConfig={responseMimeType:"application/json"};
+  const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  if(!r.ok){const t=await r.text();throw new Error("Gemini "+r.status+": "+t.slice(0,160));}
+  const j=await r.json();
+  return j.candidates?.[0]?.content?.parts?.[0]?.text||"";
+}
+
+// ANALYSIS
+async function runAnalysis(){
+  if(!sessionKey){openSettings();return;}
+  $("#analysis").innerHTML=`<div class="loading">⟳ Đang phân tích...</div>`;
+  $("#news").innerHTML=`<div class="loading">⟳ Đang tra cứu tin tức...</div>`;
+  const ctx=Object.keys(ASSETS).map(k=>{const d=priceData[k]||{};return `${ASSETS[k].label}(${ASSETS[k].sym}): ${fmtUSD(d.price)}${d.change24h!=null?` 24h ${fmtPct(d.change24h)}`:''}`;}).join("; ");
+  const prompt=`Hôm nay ${new Date().toLocaleDateString("vi-VN")}. Giá hiện tại: ${ctx}.
+Trả về JSON đúng cấu trúc (không thêm gì ngoài JSON):
+{"news":[{"title":"...","impact":"BTC|ETH|Gold|All","sentiment":"tích cực|tiêu cực|trung lập","summary":"1 câu"}],
+"assets":{"bitcoin":{"trend":"tăng|giảm|đi ngang","signal":"MUA|BÁN|GIỮ","confidence":"thấp|trung bình|cao","reason":"1-2 câu","entry":"vùng giá","stoploss":"vùng","target":"vùng"},"ethereum":{...},"gold":{...}},
+"overview":"2-3 câu tổng quan"}
+news: 4-5 tin có thể ảnh hưởng giá. Phân tích như chuyên gia tối ưu tỉ lệ thắng.`;
+  try{
+    const raw=await callGemini(prompt,true,PERSONA);
+    const data=JSON.parse(raw.replace(/```json|```/g,"").trim());
+    renderNews(data.news||[]); renderAnalysis(data);
+  }catch(e){
+    const m=e.message==="NO_KEY"?"Chưa có key (mở ⚙).":"Lỗi: "+e.message;
+    $("#analysis").innerHTML=`<div class="err">${m}</div>`;
+    $("#news").innerHTML=`<div class="err">Không tải được tin tức.</div>`;
+  }
+}
+function renderNews(news){
+  $("#newsDate").textContent=new Date().toLocaleDateString("vi-VN");
+  if(!news.length){$("#news").innerHTML=`<div class="empty">Không có tin.</div>`;return;}
+  $("#news").innerHTML=news.map(n=>{const cls=n.sentiment==="tích cực"?"pos":n.sentiment==="tiêu cực"?"neg":"neu";
+    return `<div class="news-item"><div class="news-tags"><span class="tag ${cls}">${n.sentiment}</span><span class="tag impact">${n.impact}</span></div><div class="news-title">${n.title}</div><div class="news-sum">${n.summary}</div></div>`;}).join("");
+}
+function renderAnalysis(data){
+  const cards=["bitcoin","ethereum","gold"].map(k=>{const a=data.assets?.[k];if(!a)return"";
+    const sc=a.signal==="MUA"?"buy":a.signal==="BÁN"?"sell":"hold";
+    return `<div class="strat"><div class="strat-head"><span class="strat-name">${ASSETS[k].label} <b>${ASSETS[k].sym}</b></span><span class="signal ${sc}">${a.signal}</span></div>
+      <div class="strat-meta">Xu hướng: <b>${a.trend}</b> · Tin cậy: <b>${a.confidence}</b></div>
+      <div class="strat-reason">${a.reason}</div>
+      <div class="strat-levels"><span>Vào: <b>${a.entry||'—'}</b></span><span class="sl">SL: <b>${a.stoploss||'—'}</b></span><span class="tp">TP: <b>${a.target||'—'}</b></span></div></div>`;}).join("");
+  $("#analysis").innerHTML=`<div class="overview">${data.overview||""}</div>${cards}`;
+}
+
+// ===== CHỈ BÁO KỸ THUẬT THẬT (tính từ nến Binance) =====
+function ema(values,period){
+  const k=2/(period+1); let prev=values[0]; const out=[prev];
+  for(let i=1;i<values.length;i++){ prev=values[i]*k+prev*(1-k); out.push(prev); }
+  return out;
+}
+function sma(values,period){
+  if(values.length<period) return null;
+  let s=0; for(let i=values.length-period;i<values.length;i++) s+=values[i];
+  return s/period;
+}
+function rsi(closes,period=14){
+  if(closes.length<period+1) return null;
+  let gain=0,loss=0;
+  for(let i=closes.length-period;i<closes.length;i++){
+    const d=closes[i]-closes[i-1];
+    if(d>=0) gain+=d; else loss-=d;
+  }
+  const avgG=gain/period, avgL=loss/period;
+  if(avgL===0) return 100;
+  const rs=avgG/avgL;
+  return 100-100/(1+rs);
+}
+function macd(closes){
+  if(closes.length<35) return null;
+  const e12=ema(closes,12), e26=ema(closes,26);
+  const macdLine=closes.map((_,i)=>e12[i]-e26[i]);
+  const signal=ema(macdLine.slice(26),9);
+  const m=macdLine[macdLine.length-1], s=signal[signal.length-1];
+  return {macd:m, signal:s, hist:m-s};
+}
+// Lấy nến ngày (CoinGecko hourly ~ đủ dài để tính chỉ báo) cho 1 asset
+async function fetchIndicators(asset){
+  if(asset==="gold") return null;
+  try{
+    // 200 nến 1h từ Binance để tính chỉ báo
+    const url=`https://api.binance.com/api/v3/klines?symbol=${BINANCE_SYM[asset]}&interval=1h&limit=200`;
+    const k=await fetch(url).then(r=>r.json());
+    const closes=k.map(c=>parseFloat(c[4]));
+    const last=closes[closes.length-1];
+    const ma20=sma(closes,20), ma50=sma(closes,50);
+    const r=rsi(closes,14);
+    const mc=macd(closes);
+    return {
+      price:last,
+      rsi: r!=null?+r.toFixed(1):null,
+      ma20: ma20!=null?+ma20.toFixed(2):null,
+      ma50: ma50!=null?+ma50.toFixed(2):null,
+      maTrend: (ma20&&ma50)?(ma20>ma50?"MA20>MA50 (tăng)":"MA20<MA50 (giảm)"):"—",
+      macd: mc?{macd:+mc.macd.toFixed(2),signal:+mc.signal.toFixed(2),hist:+mc.hist.toFixed(2),cross:mc.hist>=0?"dương (tích cực)":"âm (tiêu cực)"}:null
+    };
+  }catch(e){ console.error("indicators",e); return null; }
+}
+
+// ===== PIPELINE (B: tách nhiều bước gọi Gemini riêng) =====
+const STEPS=[
+  {id:"price",label:"Thu thập dữ liệu giá"},
+  {id:"news",label:"Tra cứu tin tức ảnh hưởng"},
+  {id:"tech",label:"Phân tích kỹ thuật đa khung"},
+  {id:"verdict",label:"Tổng hợp & đưa ra lời khuyên"}
+];
+let pipeData={};
+function renderPipeline(states){
+  $("#pipeline").innerHTML=STEPS.map(s=>{
+    const st=states[s.id]||"wait";
+    const icon=st==="done"?"✓":st==="run"?"⟳":st==="err"?"✕":"○";
+    return `<div class="pstep ${st}"><span class="picon">${icon}</span><span class="plabel">${s.label}</span></div>`;
+  }).join("");
+}
+async function runPipeline(){
+  if(!sessionKey){openSettings();return;}
+  const btn=$("#startBtn"); btn.disabled=true; btn.textContent="⟳ ĐANG CHẠY...";
+  const states={price:"wait",news:"wait",tech:"wait",verdict:"wait"};
+  pipeData={};
+  $("#verdictPanel").style.display="none";
+  renderPipeline(states);
+
+  try{
+    // B1: GIÁ
+    states.price="run"; renderPipeline(states);
+    await loadPrices();
+    pipeData.ctx=Object.keys(ASSETS).map(k=>{const d=priceData[k]||{};return `${ASSETS[k].label}(${ASSETS[k].sym}): ${fmtUSD(d.price)}${d.change24h!=null?` 24h ${fmtPct(d.change24h)}`:''}`;}).join("; ");
+    states.price="done"; renderPipeline(states);
+
+    // B2: TIN TỨC
+    states.news="run"; renderPipeline(states);
+    $("#news").innerHTML=`<div class="loading">⟳ Đang tra cứu...</div>`;
+    const newsRaw=await callGemini(
+      `Hôm nay ${new Date().toLocaleDateString("vi-VN")}. Giá: ${pipeData.ctx}.\nLiệt kê 4-5 tin tức/sự kiện gần đây có thể ảnh hưởng giá BTC, ETH, Vàng (vĩ mô, Fed, ETF, quy định, dòng tiền...). Trả JSON: {"news":[{"title":"...","impact":"BTC|ETH|Gold|All","sentiment":"tích cực|tiêu cực|trung lập","summary":"1 câu"}]}`,
+      true,PERSONA);
+    pipeData.news=JSON.parse(newsRaw.replace(/```json|```/g,"").trim()).news||[];
+    renderNews(pipeData.news);
+    states.news="done"; renderPipeline(states);
+
+    // B3: PHÂN TÍCH KỸ THUẬT (chỉ báo THẬT)
+    states.tech="run"; renderPipeline(states);
+    $("#analysis").innerHTML=`<div class="loading">⟳ Đang tính chỉ báo & phân tích...</div>`;
+    const [indBtc,indEth]=await Promise.all([fetchIndicators("bitcoin"),fetchIndicators("ethereum")]);
+    pipeData.ind={bitcoin:indBtc,ethereum:indEth};
+    const indText=k=>{const i=pipeData.ind[k];return i?`${ASSETS[k].sym} (khung 1h): giá ${fmtUSD(i.price)}, RSI14=${i.rsi}, MA20=${i.ma20}, MA50=${i.ma50} [${i.maTrend}], MACD hist=${i.macd?.hist} [${i.macd?.cross}]`:`${ASSETS[k].sym}: không có chỉ báo`;};
+    const indBlock=`${indText("bitcoin")}\n${indText("ethereum")}\nVàng (XAU): giá hiện tại ${fmtUSD(priceData.gold?.price)} (không có chỉ báo kỹ thuật từ nguồn free).`;
+    const newsBrief=pipeData.news.map(n=>`- ${n.title} (${n.sentiment})`).join("\n");
+    const techRaw=await callGemini(
+      `CHỈ BÁO KỸ THUẬT THẬT (tính từ nến Binance, thời điểm hiện tại):\n${indBlock}\n\nTin tức nền:\n${newsBrief}\n\nDựa CHÍNH XÁC vào các chỉ báo thật ở trên (RSI, MA20/MA50, MACD) để phân tích, KHÔNG bịa số liệu. Đưa tín hiệu tối ưu tỉ lệ thắng. Trả JSON: {"assets":{"bitcoin":{"trend":"tăng|giảm|đi ngang","signal":"MUA|BÁN|GIỮ","confidence":"thấp|trung bình|cao","reason":"1-2 câu dựa trên chỉ báo cụ thể","entry":"vùng giá","stoploss":"vùng","target":"vùng"},"ethereum":{...},"gold":{...}}}`,
+      true,PERSONA);
+    pipeData.tech=JSON.parse(techRaw.replace(/```json|```/g,"").trim());
+    renderAnalysis({assets:pipeData.tech.assets,overview:""});
+    states.tech="done"; renderPipeline(states);
+
+    // B4: LỜI KHUYÊN TỔNG HỢP
+    states.verdict="run"; renderPipeline(states);
+    $("#verdictPanel").style.display="block";
+    $("#verdict").innerHTML=`<div class="loading">⟳ Đang tổng hợp lời khuyên...</div>`;
+    const techBrief=Object.keys(pipeData.tech.assets||{}).map(k=>{const a=pipeData.tech.assets[k];return `${ASSETS[k].sym}: ${a.signal} (xu hướng ${a.trend}, tin cậy ${a.confidence})`;}).join("; ");
+    const indSummary=["bitcoin","ethereum"].map(k=>{const i=pipeData.ind?.[k];return i?`${ASSETS[k].sym} RSI=${i.rsi}, ${i.maTrend}`:"";}).filter(Boolean).join("; ");
+    const verdictRaw=await callGemini(
+      `Dữ liệu THẬT đã phân tích:\nGiá: ${pipeData.ctx}.\nChỉ báo: ${indSummary}.\nTín hiệu kỹ thuật: ${techBrief}.\nSố tin tức xem xét: ${pipeData.news.length}.\n\nVới vai chuyên gia tối ưu tỉ lệ thắng cao nhất, đưa ra LỜI KHUYÊN TỔNG HỢP cuối cùng: nên ưu tiên tài sản nào, vào lệnh ra sao, quản lý vốn & rủi ro thế nào. Viết 4-6 câu, dứt khoát, dựa trên chỉ báo thật, kèm nhắc cắt lỗ. Văn bản thuần (không JSON, không markdown).`,
+      false,PERSONA);
+    $("#verdict").innerHTML=`<div class="verdict-text">${verdictRaw.replace(/\n/g,"<br>")}</div>`;
+    states.verdict="done"; renderPipeline(states);
+
+  }catch(e){
+    const cur=Object.keys(states).find(k=>states[k]==="run");
+    if(cur) states[cur]="err"; renderPipeline(states);
+    const msg=e.message==="NO_KEY"?"Chưa có key (mở ⚙).":"Lỗi: "+e.message;
+    if(cur==="news") $("#news").innerHTML=`<div class="err">${msg}</div>`;
+    else if(cur==="tech") $("#analysis").innerHTML=`<div class="err">${msg}</div>`;
+    else if(cur==="verdict") $("#verdict").innerHTML=`<div class="err">${msg}</div>`;
+  }finally{
+    btn.disabled=false; btn.textContent="⚡ BẮT ĐẦU PHÂN TÍCH";
+  }
+}
+
+// CHAT
+async function sendChat(){
+  const t=$("#chatText").value.trim(); if(!t) return;
+  if(!sessionKey){openSettings();return;}
+  $("#chatText").value="";
+  addMsg("user",t);
+  const typing=addMsg("ai","⟳ ..."); 
+  const ctx=Object.keys(ASSETS).map(k=>{const d=priceData[k]||{};return `${ASSETS[k].sym}: ${fmtUSD(d.price)}`;}).join(", ");
+  chatHistory.push({role:"user",text:t});
+  const convo=chatHistory.slice(-8).map(m=>`${m.role==="user"?"Người dùng":"Chuyên gia"}: ${m.text}`).join("\n");
+  const prompt=`Giá hiện tại: ${ctx}.\nLịch sử:\n${convo}\n\nTrả lời câu hỏi cuối của người dùng ngắn gọn, sắc bén như chuyên gia. Kèm lý do và rủi ro nếu liên quan giao dịch.`;
+  try{
+    const r=await callGemini(prompt,false,PERSONA);
+    typing.querySelector(".bubble").textContent=r;
+    chatHistory.push({role:"ai",text:r});
+  }catch(e){ typing.querySelector(".bubble").textContent="Lỗi: "+e.message; }
+  $("#chatBox").scrollTop=$("#chatBox").scrollHeight;
+}
+function addMsg(role,text){
+  const d=document.createElement("div"); d.className="chat-msg "+role;
+  d.innerHTML=`<div class="bubble"></div>`; d.querySelector(".bubble").textContent=text;
+  $("#chatBox").appendChild(d); $("#chatBox").scrollTop=$("#chatBox").scrollHeight; return d;
+}
+
+// SETTINGS / KEY
+function openSettings(){$("#settingsModal").classList.add("show");}
+function closeSettings(){$("#settingsModal").classList.remove("show");}
+function saveKey(){
+  const v=$("#keyInput").value.trim(); if(!v) return;
+  sessionKey=v;
+  // TỰ HOST: bỏ comment để lưu vĩnh viễn
+  // localStorage.setItem("gemini_key",v);
+  $("#keyStatus").textContent="✓ Đã lưu"; $("#keyStatus").className="key-status ok";
+  setTimeout(closeSettings,700);
+}
+function loadKey(){
+  // TỰ HOST: bỏ comment để auto nạp key
+  // const k=localStorage.getItem("gemini_key"); if(k){sessionKey=k;$("#keyInput").value=k;$("#keyStatus").textContent="✓ Key đã lưu";$("#keyStatus").className="key-status ok";}
+}
+
+// THEME (default light)
+function toggleTheme(){theme=theme==="light"?"dark":"light";document.body.className=theme;$("#themeBtn").textContent=theme==="light"?"☀":"☾";loadChart();}
+// INIT
+$("#settingsBtn").onclick=openSettings;
+$("#closeSettings").onclick=closeSettings;
+$("#settingsModal").onclick=e=>{if(e.target.id==="settingsModal")closeSettings();};
+$("#keySave").onclick=saveKey;
+$("#keyToggle").onclick=()=>{const i=$("#keyInput");i.type=i.type==="password"?"text":"password";};
+$("#keyInput").addEventListener("keydown",e=>{if(e.key==="Enter")saveKey();});
+$("#analyzeBtn").onclick=runAnalysis;
+$("#startBtn").onclick=runPipeline;
+$("#refreshBtn").onclick=()=>{loadPrices();loadChart();};
+$("#themeBtn").onclick=toggleTheme;
+$("#chatSend").onclick=sendChat;
+$("#chatText").addEventListener("keydown",e=>{if(e.key==="Enter")sendChat();});
+$("#chatClear").onclick=()=>{chatHistory=[];$("#chatBox").innerHTML=`<div class="chat-msg ai"><div class="bubble">Đã xóa. Hỏi tôi điều gì đó về thị trường.</div></div>`;};
+document.body.className=theme;
+renderSeg();renderTF();loadKey();loadPrices();loadChart();
+</script>
+
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Rajdhani:wght@400;500;600;700&display=swap');
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Rajdhani',-apple-system,BlinkMacSystemFont,sans-serif;transition:background .3s,color .3s;overflow-x:hidden}
+
+/* ===== DARK = CYBERPUNK CYAN ===== */
+body.dark{--bg:#05080f;--bg2:#0a0f1a;--panel:rgba(13,21,38,.72);--panel2:rgba(20,30,52,.8);--border:rgba(0,229,255,.22);--border2:rgba(0,229,255,.4);--grid:rgba(0,229,255,.08);--text:#dff6ff;--muted:#6f8aa8;--accent:#00e5ff;--accent2:#00b8d4;--green:#00ffa3;--red:#ff3b6b;--glow:0 0 12px rgba(0,229,255,.45);color:var(--text)}
+body.dark{background:radial-gradient(ellipse at 20% 0%,#0a1830 0%,var(--bg) 55%),radial-gradient(ellipse at 90% 90%,#101a33 0%,var(--bg) 50%)}
+/* subtle grid overlay */
+body.dark::before{content:"";position:fixed;inset:0;background-image:linear-gradient(rgba(0,229,255,.04) 1px,transparent 1px),linear-gradient(90deg,rgba(0,229,255,.04) 1px,transparent 1px);background-size:42px 42px;pointer-events:none;z-index:0;mask-image:radial-gradient(ellipse at 50% 30%,#000 30%,transparent 80%)}
+
+/* ===== LIGHT ===== */
+body.light{--bg:#f4f6fa;--bg2:#fff;--panel:#fff;--panel2:#f0f3f8;--border:#e2e8f0;--border2:#cbd5e1;--grid:#eef1f6;--text:#0f1929;--muted:#64748b;--accent:#2563eb;--accent2:#1d4ed8;--green:#059669;--red:#dc2626;--glow:none;background:var(--bg);color:var(--text)}
+
+#app{max-width:1100px;margin:0 auto;padding:16px;position:relative;z-index:1}
+
+.topbar{display:flex;justify-content:space-between;align-items:center;padding:8px 4px 18px}
+.brand{display:flex;align-items:center;gap:10px;font-family:'Space Grotesk',sans-serif;font-size:21px;font-weight:700;letter-spacing:.5px}
+.logo{color:var(--accent);font-size:22px;filter:drop-shadow(var(--glow));animation:spin 8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.accent{color:var(--accent);text-shadow:var(--glow)}
+.top-actions{display:flex;gap:8px}
+.icon-btn{width:40px;height:40px;border-radius:10px;border:1px solid var(--border);background:var(--panel);color:var(--text);font-size:16px;cursor:pointer;transition:.2s;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(10px)}
+.icon-btn:hover{border-color:var(--accent);box-shadow:var(--glow);color:var(--accent)}
+.icon-btn.sm{width:32px;height:32px;font-size:13px}
+
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.65);display:none;align-items:center;justify-content:center;z-index:50;padding:16px;backdrop-filter:blur(4px)}
+.modal-bg.show{display:flex}
+.modal{background:var(--panel2);border:1px solid var(--border2);border-radius:16px;padding:22px;width:100%;max-width:420px;backdrop-filter:blur(20px);box-shadow:0 0 40px rgba(0,229,255,.15)}
+.modal-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+.modal-head h3{font-family:'Space Grotesk',sans-serif;font-size:16px}
+.field-label{font-size:13px;font-weight:600;color:var(--muted);display:block;margin-bottom:8px;letter-spacing:.5px}
+.key-row{display:flex;gap:8px}
+#keyInput{flex:1;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px;color:var(--text);font-size:13px;font-family:'Rajdhani'}
+#keyInput:focus{outline:none;border-color:var(--accent);box-shadow:var(--glow)}
+.key-status{font-size:12px;color:var(--muted);margin-top:8px;min-height:16px}
+.key-status.ok{color:var(--green)}
+.hint{font-size:11px;color:var(--muted);margin:10px 0 16px;line-height:1.5}
+.btn-primary{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#04141a;border:none;border-radius:8px;padding:9px 16px;font-weight:700;cursor:pointer;transition:.2s;font-family:'Rajdhani';letter-spacing:.5px}
+.btn-primary:hover{box-shadow:var(--glow);filter:brightness(1.1)}
+.btn-primary.sm{padding:7px 14px;font-size:13px}.btn-primary.full{width:100%;padding:11px}
+
+.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px}.card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:16px;cursor:pointer;transition:.25s;backdrop-filter:blur(10px);position:relative;overflow:hidden}
+.card::after{content:"";position:absolute;top:0;left:-100%;width:100%;height:1px;background:linear-gradient(90deg,transparent,var(--accent),transparent);transition:.5s}
+.card:hover{border-color:var(--border2);transform:translateY(-3px);box-shadow:0 8px 30px rgba(0,229,255,.12)}
+.card:hover::after{left:100%}
+.card.active{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent),0 0 24px rgba(0,229,255,.2)}
+.card-top{display:flex;align-items:center;gap:7px;font-size:13px;color:var(--muted);font-weight:600;letter-spacing:.5px}
+.dot{width:9px;height:9px;border-radius:50%;box-shadow:0 0 8px currentColor}
+.sym{margin-left:auto;font-size:11px;opacity:.7;font-family:'Space Grotesk'}
+.card-price{font-size:25px;font-weight:700;margin:8px 0 4px;font-family:'Space Grotesk';letter-spacing:-.5px}
+.card-chg{font-size:13px;font-weight:600}.card-chg.up{color:var(--green)}.card-chg.down{color:var(--red)}
+
+.panel{background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:18px;margin-bottom:16px;backdrop-filter:blur(10px)}
+.panel-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px}
+.panel-head h2{font-size:15px;font-family:'Space Grotesk',sans-serif;font-weight:700;letter-spacing:.3px}
+.muted{color:var(--muted);font-size:12px}
+.chart-wrap{height:300px;position:relative}
+.seg{display:flex;gap:4px;background:var(--bg2);border:1px solid var(--border);border-radius:9px;padding:3px;flex-wrap:wrap}
+.seg.tf{margin-bottom:12px;width:fit-content}
+.seg button{background:none;border:none;color:var(--muted);padding:5px 11px;border-radius:6px;cursor:pointer;font-weight:600;font-size:12px;font-family:'Rajdhani';transition:.2s}
+.seg button:hover{color:var(--accent)}
+.seg button.on{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#04141a;box-shadow:var(--glow)}
+
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+.grid-2 .panel{margin-bottom:0}
+.empty,.loading,.err{color:var(--muted);font-size:13px;padding:20px;text-align:center}
+.err{color:var(--red)}.loading{color:var(--accent);text-shadow:var(--glow)}
+.news-list,.analysis{display:flex;flex-direction:column;gap:10px;max-height:340px;overflow:auto}
+.news-item{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px;transition:.2s}
+.news-item:hover{border-color:var(--border2)}
+.news-tags{display:flex;gap:6px;margin-bottom:6px}
+.tag{font-size:10px;font-weight:700;padding:3px 8px;border-radius:20px;text-transform:uppercase;letter-spacing:.5px}
+.tag.pos{background:rgba(0,255,163,.15);color:var(--green)}.tag.neg{background:rgba(255,59,107,.15);color:var(--red)}.tag.neu{background:rgba(111,138,168,.15);color:var(--muted)}
+.tag.impact{background:rgba(0,229,255,.15);color:var(--accent)}
+.news-title{font-size:13px;font-weight:600;margin-bottom:3px}.news-sum{font-size:12px;color:var(--muted)}
+.overview{font-size:13px;color:var(--muted);line-height:1.5;padding:11px;background:var(--bg2);border-radius:10px;border-left:3px solid var(--accent)}
+.strat{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px;transition:.2s}
+.strat:hover{border-color:var(--border2);box-shadow:0 0 16px rgba(0,229,255,.08)}
+.strat-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.strat-name{font-size:13px}
+.signal{font-size:12px;font-weight:700;padding:3px 13px;border-radius:20px;font-family:'Space Grotesk';letter-spacing:.3px}
+.signal.buy{background:var(--green);color:#04141a;box-shadow:0 0 12px rgba(0,255,163,.5)}.signal.sell{background:var(--red);color:#fff;box-shadow:0 0 12px rgba(255,59,107,.5)}.signal.hold{background:var(--muted);color:#fff}
+.strat-meta{font-size:12px;color:var(--muted);margin-bottom:5px}
+.strat-reason{font-size:12px;line-height:1.45;margin-bottom:8px}
+.strat-levels{display:flex;gap:12px;font-size:11px;flex-wrap:wrap}
+.strat-levels .sl b{color:var(--red)}.strat-levels .tp b{color:var(--green)}
+
+.chat-box{display:flex;flex-direction:column;gap:10px;max-height:320px;overflow:auto;margin-bottom:12px;padding:4px}
+.chat-msg{display:flex}.chat-msg.user{justify-content:flex-end}
+.bubble{max-width:80%;padding:10px 13px;border-radius:14px;font-size:13px;line-height:1.5;white-space:pre-wrap}
+.chat-msg.ai .bubble{background:var(--bg2);border:1px solid var(--border);border-bottom-left-radius:4px}
+.chat-msg.user .bubble{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#04141a;border-bottom-right-radius:4px;font-weight:500}
+.chat-input{display:flex;gap:8px}
+#chatText{flex:1;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px;color:var(--text);font-size:13px;font-family:'Rajdhani'}
+#chatText:focus{outline:none;border-color:var(--accent);box-shadow:var(--glow)}
+
+.run-panel{text-align:center}
+.btn-start{width:100%;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#04141a;border:none;border-radius:12px;padding:15px;font-size:16px;font-weight:700;font-family:'Space Grotesk';letter-spacing:1px;cursor:pointer;transition:.2s;box-shadow:0 0 20px rgba(0,229,255,.3)}
+.btn-start:hover:not(:disabled){box-shadow:0 0 30px rgba(0,229,255,.55);transform:translateY(-1px)}
+.btn-start:disabled{opacity:.7;cursor:wait}
+.pipeline{display:flex;flex-direction:column;gap:8px;margin-top:14px}
+.pipeline:empty{display:none}
+.pstep{display:flex;align-items:center;gap:10px;padding:9px 13px;border-radius:10px;background:var(--bg2);border:1px solid var(--border);font-size:13px;font-weight:600;text-align:left;transition:.25s;opacity:.55}
+.pstep .picon{width:22px;height:22px;display:flex;align-items:center;justify-content:center;border-radius:50%;font-size:12px;border:1px solid var(--border)}
+.pstep.wait{opacity:.4}
+.pstep.run{opacity:1;border-color:var(--accent);box-shadow:0 0 14px rgba(0,229,255,.18)}
+.pstep.run .picon{color:var(--accent);border-color:var(--accent);animation:spin 1s linear infinite}
+.pstep.done{opacity:1}
+.pstep.done .picon{background:var(--green);color:#04141a;border-color:var(--green)}
+.pstep.err{opacity:1}.pstep.err .picon{background:var(--red);color:#fff;border-color:var(--red)}
+.verdict-panel{border-color:var(--border2);box-shadow:0 0 24px rgba(0,229,255,.1)}
+.verdict-text{font-size:14px;line-height:1.7;color:var(--text);padding:6px 2px}
+.disclaimer{background:var(--panel);border:1px solid var(--border);border-left:3px solid #f59e0b;border-radius:10px;padding:12px 14px;font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:14px;backdrop-filter:blur(10px)}
+.foot{text-align:center;font-size:11px;color:var(--muted);padding:8px;font-family:'Space Grotesk';letter-spacing:.5px}
+@media(max-width:720px){.cards{grid-template-columns:1fr}.grid-2{grid-template-columns:1fr}.brand{font-size:17px}.bubble{max-width:88%}}
+</style>
