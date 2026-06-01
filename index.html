@@ -82,7 +82,7 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script>
-let sessionKey="", theme="dark", currentAsset="bitcoin";
+let sessionKey="cloudflare_worker_active", theme="dark", currentAsset="bitcoin";
 const ASSETS={
   bitcoin:{label:"Bitcoin",sym:"BTC",color:"#f7931a"},
   ethereum:{label:"Ethereum",sym:"ETH",color:"#627eea"},
@@ -186,16 +186,64 @@ function renderTF(){
 
 // GEMINI
 const PERSONA="Bạn là chuyên gia phân tích & giao dịch BTC, ETH, Vàng dày dạn kinh nghiệm, phân tích sắc bén, quyết đoán, luôn tối ưu cho quyết định có tỉ lệ thắng cao nhất có thể dựa trên kỹ thuật, dòng tiền và bối cảnh vĩ mô. Trả lời tự tin, đi thẳng vấn đề, có lý do rõ ràng và luôn kèm quản lý rủi ro (điểm cắt lỗ). Tuyệt đối không bịa con số tỉ lệ thắng cụ thể; trung thực rằng thị trường luôn có rủi ro.";
-async function callGemini(prompt,wantJson,system){
-  if(!sessionKey) throw new Error("NO_KEY");
-  const url=`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${sessionKey}`;
-  const body={contents:[{parts:[{text:prompt}]}]};
-  if(system) body.systemInstruction={parts:[{text:system}]};
-  if(wantJson) body.generationConfig={responseMimeType:"application/json"};
-  const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-  if(!r.ok){const t=await r.text();throw new Error("Gemini "+r.status+": "+t.slice(0,160));}
-  const j=await r.json();
-  return j.candidates?.[0]?.content?.parts?.[0]?.text||"";
+async function callGemini(prompt, wantJson, system) {
+  const BACKEND_URL = "https://market.hongphi130894.workers.dev"; 
+  
+  // 1. Điều hướng bước TRA CỨU TIN TỨC
+  if (prompt.includes("Liệt kê 4-5 tin tức")) {
+    const r = await fetch(`${BACKEND_URL}/news`);
+    if (!r.ok) throw new Error("Lỗi Backend News: " + r.status);
+    const data = await r.json();
+    return JSON.stringify(data);
+  }
+  
+  // 2. Điều hướng bước PHÂN TÍCH KỸ THUẬT
+  if (prompt.includes("CHỈ BÁO KỸ THUẬT THẬT")) {
+    const parts = prompt.split("\n\nTin tức nền:\n");
+    const indicators = parts[0].replace("CHỈ BÁO KỸ THUẬT THẬT (tính từ nến Binance, thời điểm hiện tại):\n", "");
+    const newsBrief = parts[1] ? parts[1].split("\n\nDựa CHÍNH XÁC")[0] : "";
+    
+    const r = await fetch(`${BACKEND_URL}/tech`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ indicators, newsBrief })
+    });
+    if (!r.ok) throw new Error("Lỗi Backend Tech: " + r.status);
+    const data = await r.json();
+    return JSON.stringify(data);
+  }
+  
+  // 3. Điều hướng bước LỜI KHUYÊN TỔNG HỢP (VERDICT)
+  if (prompt.includes("Dữ liệu THẬT đã phân tích")) {
+    const ctx = prompt.match(/Giá:\s*(.*?)\n/)?.[1] || "";
+    const indSummary = prompt.match(/Chỉ báo:\s*(.*?)\n/)?.[1] || "";
+    const techBrief = prompt.match(/Tín hiệu kỹ thuật:\s*(.*?)\n/)?.[1] || "";
+    const newsCount = prompt.match(/Số tin tức xem xét:\s*(.*?)\n/)?.[1] || "0";
+    
+    const r = await fetch(`${BACKEND_URL}/verdict`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ctx, indSummary, techBrief, newsCount })
+    });
+    if (!r.ok) throw new Error("Lỗi Backend Verdict: " + r.status);
+    const data = await r.json();
+    return data.verdict || "";
+  }
+  
+  // 4. Điều hướng phần HỎI ĐÁP CHUYÊN GIA AI (Chat Box)
+  const ctx = prompt.match(/Giá hiện tại:\s*(.*?)\n/)?.[1] || "";
+  let convo = prompt;
+  const convoMatch = prompt.match(/Lịch sử:\n([\s\S]*?)\n\nTrả lời câu hỏi cuối/);
+  if (convoMatch) convo = convoMatch[1];
+  
+  const r = await fetch(`${BACKEND_URL}/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ctx, convo })
+  });
+  if (!r.ok) throw new Error("Lỗi Backend Chat: " + r.status);
+  const data = await r.json();
+  return data.reply || "";
 }
 
 // ANALYSIS
