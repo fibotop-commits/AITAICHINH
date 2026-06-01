@@ -64,6 +64,9 @@ body.light{--bg:#f4f6fa;--bg2:#fff;--panel:#fff;--panel2:#f0f3f8;--border:#e2e8f
 .pipeline:empty{display:none}
 .pstep{display:flex;align-items:center;gap:10px;padding:9px 13px;border-radius:10px;background:var(--bg2);border:1px solid var(--border);font-size:13px;font-weight:600;text-align:left;transition:.25s;opacity:.55}
 .pstep .picon{width:22px;height:22px;display:flex;align-items:center;justify-content:center;border-radius:50%;font-size:12px;border:1px solid var(--border)}
+.pstep .plabel{flex:1}
+.prun{margin-left:auto;width:30px;height:30px;border-radius:8px;border:1px solid var(--border);background:var(--bg2);color:var(--accent);font-size:11px;cursor:pointer;transition:.2s;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.prun:hover{border-color:var(--accent);box-shadow:0 0 10px rgba(0,229,255,.3)}
 .pstep.wait{opacity:.4}
 .pstep.run{opacity:1;border-color:var(--accent);box-shadow:0 0 14px rgba(0,229,255,.18)}
 .pstep.run .picon{color:var(--accent);border-color:var(--accent);animation:spin 1s linear infinite}
@@ -231,10 +234,17 @@ async function callGeminiDirect(prompt,jsonOut,system){
   const body={contents:[{parts:[{text:prompt}]}]};
   if(system) body.systemInstruction={parts:[{text:system}]};
   if(jsonOut) body.generationConfig={responseMimeType:"application/json"};
-  const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-  if(!r.ok){const t=await r.text();throw new Error("Gemini "+r.status+": "+t.slice(0,160));}
-  const j=await r.json();
-  return j.candidates?.[0]?.content?.parts?.[0]?.text||"";
+  // tự thử lại tối đa 3 lần khi gặp 503/429 (Gemini quá tải tạm thời)
+  let lastErr;
+  for(let attempt=0;attempt<3;attempt++){
+    const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    if(r.ok){const j=await r.json();return j.candidates?.[0]?.content?.parts?.[0]?.text||"";}
+    const t=await r.text();
+    lastErr=new Error("Gemini "+r.status+": "+t.slice(0,160));
+    if(r.status===503||r.status===429){ await new Promise(res=>setTimeout(res,1500*(attempt+1))); continue; }
+    throw lastErr; // lỗi khác thì dừng ngay
+  }
+  throw lastErr;
 }
 function parseJson(t){const c=t.replace(/```json|```/g,"").trim();const s=c.indexOf("{"),e=c.lastIndexOf("}");return JSON.parse(s!==-1?c.slice(s,e+1):c);}
 
@@ -325,51 +335,75 @@ function renderTF(){if(currentAsset==="gold"){$("#tfSeg").style.display="none";r
 
 // ===== PIPELINE =====
 const STEPS=[{id:"price",label:"Thu thập dữ liệu giá"},{id:"news",label:"Tra cứu tin tức ảnh hưởng"},{id:"tech",label:"Phân tích kỹ thuật đa khung"},{id:"verdict",label:"Tổng hợp & đưa ra lời khuyên"}];
-function renderPipeline(st){$("#pipeline").innerHTML=STEPS.map(s=>{const x=st[s.id]||"wait";const ic=x==="done"?"✓":x==="run"?"⟳":x==="err"?"✕":"○";return `<div class="pstep ${x}"><span class="picon">${ic}</span><span class="plabel">${s.label}</span></div>`;}).join("");}
+let pState={price:"wait",news:"wait",tech:"wait",verdict:"wait"};
+function renderPipeline(){$("#pipeline").innerHTML=STEPS.map(s=>{const x=pState[s.id]||"wait";const ic=x==="done"?"✓":x==="run"?"⟳":x==="err"?"✕":"○";
+  return `<div class="pstep ${x}"><span class="picon">${ic}</span><span class="plabel">${s.label}</span><button class="prun" data-step="${s.id}" title="Chạy riêng">▶</button></div>`;}).join("");
+  document.querySelectorAll(".prun").forEach(b=>b.onclick=ev=>{ev.stopPropagation();runStep(b.dataset.step);});}
+
+// --- Từng bước riêng ---
+async function stepPrice(){
+  await loadPrices();
+  pipeData.ctx=Object.keys(ASSETS).map(k=>{const d=priceData[k]||{};return `${ASSETS[k].label}(${ASSETS[k].sym}): ${fmtUSD(d.price)}${d.change24h!=null?` 24h ${fmtPct(d.change24h)}`:''}`;}).join("; ");
+}
+async function stepNews(){
+  $("#news").innerHTML=`<div class="loading">⟳ Đang tra cứu...</div>`;
+  const newsPrompt=`Hôm nay ${new Date().toLocaleDateString("vi-VN")}. Giá: ${pipeData.ctx||"(chưa có)"}.\nLiệt kê 5-6 tin tức/sự kiện gần đây ảnh hưởng giá BTC, ETH, Vàng. Trả JSON: {"news":[{"title":"...","impact":"BTC|ETH|Gold|All","sentiment":"tích cực|tiêu cực|trung lập","summary":"1 câu"}]}`;
+  const newsRes=await aiCall("/news",null,newsPrompt,{jsonOut:true});
+  pipeData.news=(WORKER_URL?newsRes.news:parseJson(newsRes).news)||[];
+  renderNews(pipeData.news);
+}
+async function stepTech(){
+  if(!pipeData.ctx) throw new Error("Cần chạy bước 'Thu thập dữ liệu giá' trước.");
+  $("#analysis").innerHTML=`<div class="loading">⟳ Đang tính chỉ báo & phân tích...</div>`;
+  const [ib,ie]=await Promise.all([fetchIndicators("bitcoin"),fetchIndicators("ethereum")]);
+  pipeData.ind={bitcoin:ib,ethereum:ie};
+  const it=k=>{const i=pipeData.ind[k];return i?`${ASSETS[k].sym} (1h): giá ${fmtUSD(i.price)}, RSI14=${i.rsi}, MA20=${i.ma20}, MA50=${i.ma50} [${i.maTrend}], MACD hist=${i.macd?.hist} [${i.macd?.cross}]`:`${ASSETS[k].sym}: n/a`;};
+  const indBlock=`${it("bitcoin")}\n${it("ethereum")}\nVàng (XAU): giá ${fmtUSD(priceData.gold?.price)} (không có chỉ báo từ nguồn free).`;
+  const newsBrief=(pipeData.news||[]).map(n=>`- ${n.title} (${n.sentiment})`).join("\n");
+  const techPrompt=`CHỈ BÁO KỸ THUẬT THẬT:\n${indBlock}\n\nTin nền:\n${newsBrief||"(chưa có)"}\n\nDựa CHÍNH XÁC vào chỉ báo thật, KHÔNG bịa. Trả JSON: {"assets":{"bitcoin":{"trend":"tăng|giảm|đi ngang","signal":"MUA|BÁN|GIỮ","confidence":"thấp|trung bình|cao","reason":"1-2 câu","entry":"vùng","stoploss":"vùng","target":"vùng"},"ethereum":{...},"gold":{...}}}`;
+  const techRes=await aiCall("/tech",{indicators:indBlock,newsBrief},techPrompt,{jsonOut:true});
+  pipeData.tech=WORKER_URL?techRes:parseJson(techRes);
+  renderAnalysis({assets:pipeData.tech.assets});
+}
+async function stepVerdict(){
+  if(!pipeData.ctx) throw new Error("Cần chạy bước 'Thu thập dữ liệu giá' trước.");
+  if(!pipeData.tech) throw new Error("Cần chạy bước 'Phân tích kỹ thuật' trước.");
+  $("#verdictPanel").style.display="block";$("#verdict").innerHTML=`<div class="loading">⟳ Đang tổng hợp...</div>`;
+  const techBrief=Object.keys(pipeData.tech.assets||{}).map(k=>{const a=pipeData.tech.assets[k];return `${ASSETS[k].sym}: ${a.signal} (${a.trend}, ${a.confidence})`;}).join("; ");
+  const indSummary=["bitcoin","ethereum"].map(k=>{const i=pipeData.ind?.[k];return i?`${ASSETS[k].sym} RSI=${i.rsi}, ${i.maTrend}`:"";}).filter(Boolean).join("; ");
+  const vPrompt=`Dữ liệu THẬT:\nGiá: ${pipeData.ctx}.\nChỉ báo: ${indSummary}.\nTín hiệu: ${techBrief}.\nTin xem xét: ${(pipeData.news||[]).length}.\n\nĐưa LỜI KHUYÊN TỔNG HỢP cụ thể, hành động được:\n1. Ưu tiên tài sản nào.\n2. % vốn mỗi lệnh (vd 5-10%).\n3. SPOT hay FUTURES (futures phải cảnh báo đòn bẩy, gợi ý mức thận trọng).\n4. Ngắn hạn hay dài hạn + lý do từ chỉ báo.\n5. Điểm vào/cắt lỗ/chốt lời.\nLuôn nhắc rủi ro, KHÔNG xúi all-in/đòn bẩy cao, nhấn mạnh tham khảo. Văn bản thuần.`;
+  const vRes=await aiCall("/verdict",{ctx:pipeData.ctx,indSummary,techBrief,newsCount:(pipeData.news||[]).length},vPrompt,{});
+  const vText=WORKER_URL?vRes.verdict:vRes;
+  $("#verdict").innerHTML=`<div class="verdict-text">${vText.replace(/\n/g,"<br>")}</div>`;
+}
+const STEP_FN={price:stepPrice,news:stepNews,tech:stepTech,verdict:stepVerdict};
+
+// Chạy 1 bước riêng
+async function runStep(id){
+  pState[id]="run";renderPipeline();
+  try{ await STEP_FN[id](); pState[id]="done"; }
+  catch(e){ pState[id]="err"; showStepErr(id,e); }
+  renderPipeline();
+}
+function showStepErr(id,e){
+  const m=e.message==="NO_KEY"?"Chưa cấu hình (mở ⚙).":e.message;
+  if(id==="news")$("#news").innerHTML=`<div class="err">${m}</div>`;
+  else if(id==="tech")$("#analysis").innerHTML=`<div class="err">${m}</div>`;
+  else if(id==="verdict"){$("#verdictPanel").style.display="block";$("#verdict").innerHTML=`<div class="err">${m}</div>`;}
+}
+
+// Chạy tuần tự cả 4
 async function runPipeline(){
   if(!WORKER_URL && !sessionKey){openSettings();return;}
   const btn=$("#startBtn");btn.disabled=true;btn.textContent="⟳ ĐANG CHẠY...";
-  const st={price:"wait",news:"wait",tech:"wait",verdict:"wait"};pipeData={};$("#verdictPanel").style.display="none";renderPipeline(st);
-  try{
-    st.price="run";renderPipeline(st);
-    await loadPrices();
-    pipeData.ctx=Object.keys(ASSETS).map(k=>{const d=priceData[k]||{};return `${ASSETS[k].label}(${ASSETS[k].sym}): ${fmtUSD(d.price)}${d.change24h!=null?` 24h ${fmtPct(d.change24h)}`:''}`;}).join("; ");
-    st.price="done";renderPipeline(st);
-
-    // NEWS
-    st.news="run";renderPipeline(st);$("#news").innerHTML=`<div class="loading">⟳ Đang tra cứu...</div>`;
-    const newsPrompt=`Hôm nay ${new Date().toLocaleDateString("vi-VN")}. Giá: ${pipeData.ctx}.\nLiệt kê 5-6 tin tức/sự kiện gần đây ảnh hưởng giá BTC, ETH, Vàng. Trả JSON: {"news":[{"title":"...","impact":"BTC|ETH|Gold|All","sentiment":"tích cực|tiêu cực|trung lập","summary":"1 câu"}]}`;
-    const newsRes=await aiCall("/news",null,newsPrompt,{jsonOut:true});
-    pipeData.news=(WORKER_URL?newsRes.news:parseJson(newsRes).news)||[];
-    renderNews(pipeData.news);st.news="done";renderPipeline(st);
-
-    // TECH
-    st.tech="run";renderPipeline(st);$("#analysis").innerHTML=`<div class="loading">⟳ Đang tính chỉ báo & phân tích...</div>`;
-    const [ib,ie]=await Promise.all([fetchIndicators("bitcoin"),fetchIndicators("ethereum")]);
-    pipeData.ind={bitcoin:ib,ethereum:ie};
-    const it=k=>{const i=pipeData.ind[k];return i?`${ASSETS[k].sym} (1h): giá ${fmtUSD(i.price)}, RSI14=${i.rsi}, MA20=${i.ma20}, MA50=${i.ma50} [${i.maTrend}], MACD hist=${i.macd?.hist} [${i.macd?.cross}]`:`${ASSETS[k].sym}: n/a`;};
-    const indBlock=`${it("bitcoin")}\n${it("ethereum")}\nVàng (XAU): giá ${fmtUSD(priceData.gold?.price)} (không có chỉ báo từ nguồn free).`;
-    const newsBrief=pipeData.news.map(n=>`- ${n.title} (${n.sentiment})`).join("\n");
-    const techPrompt=`CHỈ BÁO KỸ THUẬT THẬT:\n${indBlock}\n\nTin nền:\n${newsBrief}\n\nDựa CHÍNH XÁC vào chỉ báo thật, KHÔNG bịa. Trả JSON: {"assets":{"bitcoin":{"trend":"tăng|giảm|đi ngang","signal":"MUA|BÁN|GIỮ","confidence":"thấp|trung bình|cao","reason":"1-2 câu","entry":"vùng","stoploss":"vùng","target":"vùng"},"ethereum":{...},"gold":{...}}}`;
-    const techRes=await aiCall("/tech",{indicators:indBlock,newsBrief},techPrompt,{jsonOut:true});
-    pipeData.tech=WORKER_URL?techRes:parseJson(techRes);
-    renderAnalysis({assets:pipeData.tech.assets});st.tech="done";renderPipeline(st);
-
-    // VERDICT
-    st.verdict="run";renderPipeline(st);$("#verdictPanel").style.display="block";$("#verdict").innerHTML=`<div class="loading">⟳ Đang tổng hợp...</div>`;
-    const techBrief=Object.keys(pipeData.tech.assets||{}).map(k=>{const a=pipeData.tech.assets[k];return `${ASSETS[k].sym}: ${a.signal} (${a.trend}, ${a.confidence})`;}).join("; ");
-    const indSummary=["bitcoin","ethereum"].map(k=>{const i=pipeData.ind?.[k];return i?`${ASSETS[k].sym} RSI=${i.rsi}, ${i.maTrend}`:"";}).filter(Boolean).join("; ");
-    const vPrompt=`Dữ liệu THẬT:\nGiá: ${pipeData.ctx}.\nChỉ báo: ${indSummary}.\nTín hiệu: ${techBrief}.\nTin xem xét: ${pipeData.news.length}.\n\nĐưa LỜI KHUYÊN TỔNG HỢP cụ thể, hành động được:\n1. Ưu tiên tài sản nào.\n2. % vốn mỗi lệnh (vd 5-10%).\n3. SPOT hay FUTURES (futures phải cảnh báo đòn bẩy, gợi ý mức thận trọng).\n4. Ngắn hạn hay dài hạn + lý do từ chỉ báo.\n5. Điểm vào/cắt lỗ/chốt lời.\nLuôn nhắc rủi ro, KHÔNG xúi all-in/đòn bẩy cao, nhấn mạnh tham khảo. Văn bản thuần.`;
-    const vRes=await aiCall("/verdict",{ctx:pipeData.ctx,indSummary,techBrief,newsCount:pipeData.news.length},vPrompt,{});
-    const vText=WORKER_URL?vRes.verdict:vRes;
-    $("#verdict").innerHTML=`<div class="verdict-text">${vText.replace(/\n/g,"<br>")}</div>`;st.verdict="done";renderPipeline(st);
-  }catch(e){
-    const cur=Object.keys(st).find(k=>st[k]==="run");if(cur)st[cur]="err";renderPipeline(st);
-    const m=e.message==="NO_KEY"?"Chưa cấu hình (mở ⚙).":"Lỗi: "+e.message;
-    if(cur==="news")$("#news").innerHTML=`<div class="err">${m}</div>`;
-    else if(cur==="tech")$("#analysis").innerHTML=`<div class="err">${m}</div>`;
-    else if(cur==="verdict")$("#verdict").innerHTML=`<div class="err">${m}</div>`;
-  }finally{btn.disabled=false;btn.textContent="⚡ BẮT ĐẦU PHÂN TÍCH";}
+  pState={price:"wait",news:"wait",tech:"wait",verdict:"wait"};pipeData={};$("#verdictPanel").style.display="none";renderPipeline();
+  for(const s of STEPS){
+    pState[s.id]="run";renderPipeline();
+    try{ await STEP_FN[s.id](); pState[s.id]="done"; }
+    catch(e){ pState[s.id]="err"; showStepErr(s.id,e); break; }
+    renderPipeline();
+  }
+  btn.disabled=false;btn.textContent="⚡ BẮT ĐẦU PHÂN TÍCH";
 }
 function renderNews(news){$("#newsDate").textContent=new Date().toLocaleDateString("vi-VN");
   if(!news.length){$("#news").innerHTML=`<div class="empty">Không có tin.</div>`;return;}
