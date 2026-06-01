@@ -121,7 +121,9 @@ async function loadPrices(){
 }
 
 // CHART (multi timeframe: Binance phút + CoinGecko ngày)
-let chartObj = null;
+
+  let chartObj = null;
+  
 async function loadChart(){
   const a=ASSETS[currentAsset];
   const container=$("#chart");
