@@ -44,7 +44,7 @@
       <div class="seg" id="assetSeg"></div>
     </div>
     <div class="seg tf" id="tfSeg"></div>
-    <div class="chart-wrap"><canvas id="chart"></canvas></div>
+    <div class="chart-wrap"><div id="chart"></div></div>
   </section>
 
   <div class="grid-2">
@@ -80,7 +80,7 @@
   <footer class="foot">MarketAI · CoinGecko + gold-api · Gemini 2.5 Flash</footer>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
 <script>
 let sessionKey="cloudflare_worker_active", theme="dark", currentAsset="bitcoin";
 const ASSETS={
@@ -123,43 +123,58 @@ async function loadPrices(){
 // CHART (multi timeframe: Binance phút + CoinGecko ngày)
 async function loadChart(){
   const a=ASSETS[currentAsset];
-  const ctx=$("#chart").getContext("2d");
-  if(chartObj) chartObj.destroy();
-  let series=[];
+  const container=$("#chart");
+  if(chartObj) { chartObj.destroy(); chartObj=null; }
   if(currentAsset==="gold"){
-    drawEmpty(ctx,"Vàng: API free không hỗ trợ lịch sử theo khung giờ");
+    container.innerHTML=`<div style="color:var(--muted);padding:20px;font-size:13px;text-align:center">Vàng: API không hỗ trợ lịch sử đồ thị nến khung nhỏ</div>`;
     return;
   }
   const tf=TFS[currentTF];
+  let seriesData=[];
   try{
     if(tf.src==="binance"){
       const url=`https://api.binance.com/api/v3/klines?symbol=${BINANCE_SYM[currentAsset]}&interval=${tf.interval}&limit=${tf.limit}`;
       const k=await fetch(url).then(r=>r.json());
-      series=k.map(c=>({t:c[0],v:parseFloat(c[4])})); // close
+      seriesData=k.map(c=>({
+        x: new Date(c[0]),
+        y: [parseFloat(c[1]), parseFloat(c[2]), parseFloat(c[3]), parseFloat(c[4])] // Open, High, Low, Close
+      }));
     }else{
-      const url=`https://api.coingecko.com/api/v3/coins/${currentAsset}/market_chart?vs_currency=usd&days=${tf.days}`;
-      const j=await fetch(url).then(r=>r.json());
-      series=(j.prices||[]).map(p=>({t:p[0],v:p[1]}));
+      // Chuyển sang endpoint OHLC chính gốc của CoinGecko cho khung ngày
+      const url=`https://api.coingecko.com/api/v3/coins/${currentAsset}/ohlc?vs_currency=usd&days=${tf.days}`;
+      const k=await fetch(url).then(r=>r.json());
+      seriesData=k.map(c=>({
+        x: new Date(c[0]),
+        y: [c[1], c[2], c[3], c[4]]
+      }));
     }
-  }catch(e){ drawEmpty(ctx,"Không tải được dữ liệu"); return; }
-  if(!series.length){ drawEmpty(ctx,"Không có dữ liệu"); return; }
-  const css=getComputedStyle(document.body);
-  const grid=css.getPropertyValue("--grid").trim(), txt=css.getPropertyValue("--muted").trim();
-  const grad=ctx.createLinearGradient(0,0,0,300);
-  grad.addColorStop(0,a.color+"55"); grad.addColorStop(1,a.color+"00");
-  const isMin=tf.src==="binance";
-  const labels=series.map(p=>{
-    const d=new Date(p.t);
-    return isMin?d.toLocaleTimeString("vi-VN",{hour:"2-digit",minute:"2-digit"}):d.toLocaleDateString("vi-VN",{day:"2-digit",month:"2-digit"});
-  });
-  chartObj=new Chart(ctx,{type:"line",
-    data:{labels,datasets:[{data:series.map(p=>p.v),borderColor:a.color,backgroundColor:grad,fill:true,tension:.3,pointRadius:0,borderWidth:2}]},
-    options:{responsive:true,maintainAspectRatio:false,
-      plugins:{legend:{display:false},tooltip:{mode:"index",intersect:false,callbacks:{label:c=>fmtUSD(c.parsed.y)}}},
-      scales:{x:{grid:{display:false},ticks:{color:txt,maxTicksLimit:6,font:{size:10}}},y:{position:"right",grid:{color:grid},ticks:{color:txt,callback:v=>fmtUSD(v)}}}}
-  });
+  }catch(e){
+    container.innerHTML=`<div style="color:var(--red);padding:20px;font-size:13px;text-align:center">Không tải được dữ liệu nến Nhật</div>`;
+    return;
+  }
+  if(!seriesData.length){
+    container.innerHTML=`<div style="color:var(--muted);padding:20px;font-size:13px;text-align:center">Không có dữ liệu nến hiển thị</div>`;
+    return;
+  }
+  container.innerHTML="";
+
+  const options = {
+    series: [{ data: seriesData }],
+    chart: { type: 'candlestick', height: 300, toolbar: { show: false }, background: 'transparent' },
+    theme: { mode: theme },
+    xaxis: { type: 'datetime', labels: { style: { colors: 'var(--muted)', fontSize: '10px' } } },
+    yaxis: { tooltip: { enabled: true }, opposite: true, labels: { style: { colors: 'var(--muted)', fontSize: '11px' }, formatter: v => fmtUSD(v) } },
+    grid: { borderColor: 'var(--grid)' },
+    plotOptions: {
+      candlestick: {
+        colors: { upward: '#00ffa3', downward: '#ff3b6b' }, // Khớp hoàn toàn hệ màu neon của giao diện bạn
+        wick: { useFillColor: true }
+      }
+    }
+  };
+  chartObj = new ApexCharts(container, options);
+  chartObj.render();
 }
-function drawEmpty(ctx,msg){ const css=getComputedStyle(document.body); ctx.clearRect(0,0,ctx.canvas.width,ctx.canvas.height); ctx.fillStyle=css.getPropertyValue("--muted").trim(); ctx.font="13px sans-serif"; ctx.fillText(msg,20,140); }
 
 // RENDER cards / segs
 function renderCards(){
@@ -279,6 +294,7 @@ function renderAnalysis(data){
     const sc=a.signal==="MUA"?"buy":a.signal==="BÁN"?"sell":"hold";
     return `<div class="strat"><div class="strat-head"><span class="strat-name">${ASSETS[k].label} <b>${ASSETS[k].sym}</b></span><span class="signal ${sc}">${a.signal}</span></div>
       <div class="strat-meta">Xu hướng: <b>${a.trend}</b> · Tin cậy: <b>${a.confidence}</b></div>
+      <div class="strat-meta" style="color:var(--accent); margin-bottom:5px;">Loại hình: <b>${a.trade_type||'—'}</b> · Phân bổ: <b>${a.allocation_pct||'—'}</b></div>
       <div class="strat-reason">${a.reason}</div>
       <div class="strat-levels"><span>Vào: <b>${a.entry||'—'}</b></span><span class="sl">SL: <b>${a.stoploss||'—'}</b></span><span class="tp">TP: <b>${a.target||'—'}</b></span></div></div>`;}).join("");
   $("#analysis").innerHTML=`<div class="overview">${data.overview||""}</div>${cards}`;
