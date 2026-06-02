@@ -297,14 +297,8 @@ const fmtUSD=n=>n==null?"—":"$"+Number(n).toLocaleString("en-US",{maximumFract
 const fmtPct=n=>n==null?"":(n>=0?"+":"")+n.toFixed(2)+"%";
 const PERSONA="Bạn là chuyên gia phân tích & giao dịch BTC, ETH, Vàng dày dạn kinh nghiệm, phân tích sắc bén, quyết đoán, luôn tối ưu cho quyết định có tỉ lệ thắng cao nhất có thể dựa trên kỹ thuật, dòng tiền và bối cảnh vĩ mô. Trả lời tự tin, đi thẳng vấn đề, có lý do rõ ràng và luôn kèm quản lý rủi ro. Tuyệt đối không bịa con số tỉ lệ thắng cụ thể; trung thực rằng thị trường luôn có rủi ro.";
 
-// ===== GỌI AI: ưu tiên Worker, fallback Gemini trực tiếp =====
+// ===== GỌI AI: LUÔN gọi thẳng Gemini (ổn định từ VN). Worker chỉ dùng cho Trade. =====
 async function aiCall(endpoint, payload, directPrompt, directOpts){
-  if(WORKER_URL){
-    const r=await fetch(WORKER_URL.replace(/\/$/,"")+endpoint, endpoint==="/news"?{method:"GET"}:{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
-    if(!r.ok) throw new Error("Worker "+r.status);
-    return await r.json();
-  }
-  // fallback: gọi Gemini trực tiếp (cần key)
   const raw=await callGeminiDirect(directPrompt, directOpts?.jsonOut, PERSONA);
   return directOpts?.wrap ? directOpts.wrap(raw) : raw;
 }
@@ -429,7 +423,7 @@ async function stepNews(){
   $("#news").innerHTML=`<div class="loading">⟳ Đang tra cứu...</div>`;
   const newsPrompt=`Hôm nay ${new Date().toLocaleDateString("vi-VN")}. Giá: ${pipeData.ctx||"(chưa có)"}.\nLiệt kê 5-6 tin tức/sự kiện gần đây ảnh hưởng giá BTC, ETH, Vàng. Trả JSON: {"news":[{"title":"...","impact":"BTC|ETH|Gold|All","sentiment":"tích cực|tiêu cực|trung lập","summary":"1 câu"}]}`;
   const newsRes=await aiCall("/news",null,newsPrompt,{jsonOut:true});
-  pipeData.news=(WORKER_URL?newsRes.news:parseJson(newsRes).news)||[];
+  pipeData.news=parseJson(newsRes).news||[];
   renderNews(pipeData.news);
 }
 async function stepTech(){
@@ -442,7 +436,7 @@ async function stepTech(){
   const newsBrief=(pipeData.news||[]).map(n=>`- ${n.title} (${n.sentiment})`).join("\n");
   const techPrompt=`CHỈ BÁO KỸ THUẬT THẬT:\n${indBlock}\n\nTin nền:\n${newsBrief||"(chưa có)"}\n\nDựa CHÍNH XÁC vào chỉ báo thật, KHÔNG bịa. Trả JSON: {"assets":{"bitcoin":{"trend":"tăng|giảm|đi ngang","signal":"MUA|BÁN|GIỮ","confidence":"thấp|trung bình|cao","reason":"1-2 câu","entry":"vùng","stoploss":"vùng","target":"vùng"},"ethereum":{...},"gold":{...}}}`;
   const techRes=await aiCall("/tech",{indicators:indBlock,newsBrief},techPrompt,{jsonOut:true});
-  pipeData.tech=WORKER_URL?techRes:parseJson(techRes);
+  pipeData.tech=parseJson(techRes);
   renderAnalysis({assets:pipeData.tech.assets});
 }
 async function stepVerdict(){
@@ -453,7 +447,7 @@ async function stepVerdict(){
   const indSummary=["bitcoin","ethereum"].map(k=>{const i=pipeData.ind?.[k];return i?`${ASSETS[k].sym} RSI=${i.rsi}, ${i.maTrend}`:"";}).filter(Boolean).join("; ");
   const vPrompt=`Dữ liệu THẬT:\nGiá: ${pipeData.ctx}.\nChỉ báo: ${indSummary}.\nTín hiệu: ${techBrief}.\nTin xem xét: ${(pipeData.news||[]).length}.\n\nĐưa LỜI KHUYÊN TỔNG HỢP cụ thể, hành động được:\n1. Ưu tiên tài sản nào.\n2. % vốn mỗi lệnh (vd 5-10%).\n3. SPOT hay FUTURES (futures phải cảnh báo đòn bẩy, gợi ý mức thận trọng).\n4. Ngắn hạn hay dài hạn + lý do từ chỉ báo.\n5. Điểm vào/cắt lỗ/chốt lời.\nLuôn nhắc rủi ro, KHÔNG xúi all-in/đòn bẩy cao, nhấn mạnh tham khảo. Văn bản thuần.`;
   const vRes=await aiCall("/verdict",{ctx:pipeData.ctx,indSummary,techBrief,newsCount:(pipeData.news||[]).length},vPrompt,{});
-  const vText=WORKER_URL?vRes.verdict:vRes;
+  const vText=vRes;
   $("#verdict").innerHTML=`<div class="verdict-text">${vText.replace(/\n/g,"<br>")}</div>`;
 }
 const STEP_FN={price:stepPrice,news:stepNews,tech:stepTech,verdict:stepVerdict};
@@ -474,7 +468,7 @@ function showStepErr(id,e){
 
 // Chạy tuần tự cả 4
 async function runPipeline(){
-  if(!WORKER_URL && !sessionKey){openSettings();return;}
+  if(!sessionKey){openSettings();return;}
   const btn=$("#startBtn");btn.disabled=true;btn.textContent="⟳ ĐANG CHẠY...";
   pState={price:"wait",news:"wait",tech:"wait",verdict:"wait"};pipeData={};$("#verdictPanel").style.display="none";renderPipeline();
   for(const s of STEPS){
@@ -497,15 +491,13 @@ function renderAnalysis(data){const cards=["bitcoin","ethereum","gold"].map(k=>{
 // ===== CHAT =====
 async function sendChat(){
   const t=$("#chatText").value.trim();if(!t)return;
-  if(!WORKER_URL && !sessionKey){openSettings();return;}
+  if(!sessionKey){openSettings();return;}
   $("#chatText").value="";addMsg("user",t);const typing=addMsg("ai","⟳ ...");
   const ctx=Object.keys(ASSETS).map(k=>{const d=priceData[k]||{};return `${ASSETS[k].sym}: ${fmtUSD(d.price)}`;}).join(", ");
   chatHistory.push({role:"user",text:t});
   const convo=chatHistory.slice(-8).map(m=>`${m.role==="user"?"Người dùng":"Chuyên gia"}: ${m.text}`).join("\n");
   try{
-    let reply;
-    if(WORKER_URL){const res=await aiCall("/chat",{ctx,convo});reply=res.reply;}
-    else{reply=await callGeminiDirect(`Giá: ${ctx}.\nLịch sử:\n${convo}\n\nTrả lời câu hỏi cuối ngắn gọn, sắc bén như chuyên gia, kèm rủi ro nếu liên quan giao dịch.`,false,PERSONA);}
+    const reply=await callGeminiDirect(`Giá: ${ctx}.\nLịch sử:\n${convo}\n\nTrả lời câu hỏi cuối ngắn gọn, sắc bén như chuyên gia, kèm rủi ro nếu liên quan giao dịch.`,false,PERSONA);
     typing.querySelector(".bubble").textContent=reply;chatHistory.push({role:"ai",text:reply});
   }catch(e){typing.querySelector(".bubble").textContent="Lỗi: "+e.message;}
   $("#chatBox").scrollTop=$("#chatBox").scrollHeight;
