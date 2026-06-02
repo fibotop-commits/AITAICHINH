@@ -591,7 +591,7 @@ function drawWallet(){
     return `<div class="torder"><div class="torder-head"><span class="torder-sym">${o.sym}<span class="tbadge ${o.side}">${o.side}</span><span class="tbadge type">${o.type}${o.lev>1?' x'+o.lev:''}</span></span><span class="${up?'pnl-up':'pnl-down'}" style="font-size:15px">${up?'+':''}${fmtUSD(pnl)}</span></div>
       <div class="torder-grid"><div><div class="lbl">Vào</div><div class="val">${fmtUSD(o.entry)}</div></div><div><div class="lbl">Hiện tại</div><div class="val">${fmtUSD(now)}</div></div><div><div class="lbl">Ký quỹ</div><div class="val">${fmtUSD(o.margin)}</div></div>
       <div><div class="lbl">SL</div><div class="val" style="color:var(--red)">${o.sl?fmtUSD(o.sl):'—'}</div></div><div><div class="lbl">TP</div><div class="val" style="color:var(--green)">${o.tp?fmtUSD(o.tp):'—'}</div></div><div></div></div>
-      <button class="tclose" onclick="closeTrade(${o.id})">Đóng lệnh</button></div>`;
+      <button class="tclose" onclick="closeTrade('${o.id}')">Đóng lệnh</button></div>`;
   }).join("");
   const wins=demo.history.filter(o=>(o.pnl||0)>0).length;
   const wr=demo.history.length?Math.round(wins/demo.history.length*100):0;
