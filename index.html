@@ -116,6 +116,37 @@ body.light{--bg:#f4f6fa;--bg2:#fff;--panel:#fff;--panel2:#f0f3f8;--border:#e2e8f
 .chat-input{display:flex;gap:8px}
 #chatText{flex:1;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px;color:var(--text);font-size:16px;font-family:'Rajdhani'}
 #chatText:focus{outline:none;border-color:var(--accent);box-shadow:var(--glow)}
+.tabbar{display:flex;gap:8px;margin-bottom:16px;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:5px;backdrop-filter:blur(10px)}
+.tab{flex:1;background:none;border:none;color:var(--muted);padding:11px;border-radius:8px;cursor:pointer;font-weight:700;font-size:14px;font-family:'Space Grotesk';transition:.2s}
+.tab.on{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#04141a;box-shadow:var(--glow)}
+.wallet-row{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px}
+.wallet-bal{font-size:28px;font-weight:700;font-family:'Space Grotesk';margin-top:2px}
+.wallet-pnl{text-align:right}
+.pnl-up{color:var(--green);font-size:20px;font-weight:700;font-family:'Space Grotesk'}
+.pnl-down{color:var(--red);font-size:20px;font-weight:700;font-family:'Space Grotesk'}
+.btn-ghost{width:100%;background:var(--bg2);border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:9px;cursor:pointer;font-family:'Rajdhani';font-weight:600;transition:.2s}
+.btn-ghost:hover{border-color:var(--red);color:var(--red)}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px}
+.fg{display:flex;flex-direction:column;gap:6px}
+.fg label{font-size:12px;color:var(--muted);font-weight:600}
+.fg input{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px;color:var(--text);font-size:16px;font-family:'Rajdhani'}
+.fg input:focus{outline:none;border-color:var(--accent);box-shadow:var(--glow)}
+.seg.sm button{padding:7px 10px;font-size:12px}
+.trade-msg{margin-top:10px;font-size:13px;text-align:center;min-height:18px}
+.trade-list{display:flex;flex-direction:column;gap:10px}
+.torder{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px}
+.torder-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.torder-sym{font-weight:700;font-family:'Space Grotesk';display:flex;align-items:center;gap:8px}
+.tbadge{font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;text-transform:uppercase}
+.tbadge.long{background:var(--green);color:#04141a}.tbadge.short{background:var(--red);color:#fff}
+.tbadge.type{background:rgba(0,229,255,.15);color:var(--accent)}
+.torder-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:12px;margin-bottom:10px}
+.torder-grid .lbl{color:var(--muted);font-size:11px}
+.torder-grid .val{font-weight:600;font-family:'Space Grotesk'}
+.tclose{width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px;cursor:pointer;font-family:'Rajdhani';font-weight:600;transition:.2s}
+.tclose:hover{border-color:var(--accent);color:var(--accent)}
+@media(max-width:720px){.form-grid{grid-template-columns:1fr}}
+@media(max-width:720px){.form-grid{grid-template-columns:1fr}}
 .disclaimer{background:var(--panel);border:1px solid var(--border);border-left:3px solid #f59e0b;border-radius:10px;padding:12px 14px;font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:14px;backdrop-filter:blur(10px)}
 .foot{text-align:center;font-size:11px;color:var(--muted);padding:8px;font-family:'Space Grotesk';letter-spacing:.5px}
 @media(max-width:720px){.cards{grid-template-columns:1fr}.grid-2{grid-template-columns:1fr}.brand{font-size:17px}.bubble{max-width:88%}#app{padding:12px}}
@@ -148,6 +179,12 @@ body.light{--bg:#f4f6fa;--bg2:#fff;--panel:#fff;--panel2:#f0f3f8;--border:#e2e8f
     </div>
   </div>
 
+  <div class="tabbar">
+    <button class="tab on" data-tab="analyze">📊 Phân tích</button>
+    <button class="tab" data-tab="trade">💹 Trade demo</button>
+  </div>
+
+  <div id="tabAnalyze" class="tabpane">
   <section class="cards" id="cards"></section>
 
   <section class="panel run-panel">
@@ -188,7 +225,50 @@ body.light{--bg:#f4f6fa;--bg2:#fff;--panel:#fff;--panel2:#f0f3f8;--border:#e2e8f
     </div>
   </section>
 
-  <div class="disclaimer">⚠️ <b>Miễn trừ trách nhiệm:</b> Phân tích & chiến lược chỉ mang tính tham khảo, KHÔNG phải lời khuyên đầu tư. Thị trường biến động cao, không gì đảm bảo thắng. Bạn tự chịu trách nhiệm cho quyết định của mình.</div>
+  </div><!-- /tabAnalyze -->
+
+  <div id="tabTrade" class="tabpane" style="display:none">
+    <!-- Ví ảo -->
+    <section class="panel wallet">
+      <div class="wallet-row">
+        <div><div class="muted">Số dư khả dụng</div><div class="wallet-bal" id="wBal">$10,000.00</div></div>
+        <div class="wallet-pnl"><div class="muted">Tổng P&L</div><div id="wPnl" class="pnl-up">+$0.00</div></div>
+      </div>
+      <button id="resetWallet" class="btn-ghost">↺ Reset ví về $10,000</button>
+    </section>
+
+    <!-- Form mở lệnh -->
+    <section class="panel">
+      <div class="panel-head"><h2>Mở lệnh mới</h2><button id="aiFillBtn" class="btn-primary sm">⚡ Trade theo gợi ý AI</button></div>
+      <div class="form-grid">
+        <div class="fg"><label>Tài sản</label><div class="seg sm" id="tCoin"><button class="on" data-v="bitcoin">BTC</button><button data-v="ethereum">ETH</button></div></div>
+        <div class="fg"><label>Loại</label><div class="seg sm" id="tType"><button class="on" data-v="spot">Spot</button><button data-v="futures">Futures</button></div></div>
+        <div class="fg"><label>Hướng</label><div class="seg sm" id="tSide"><button class="on" data-v="long">Long ▲</button><button data-v="short">Short ▼</button></div></div>
+        <div class="fg" id="levWrap" style="display:none"><label>Đòn bẩy</label><div class="seg sm" id="tLev"><button data-v="2">x2</button><button class="on" data-v="5">x5</button><button data-v="10">x10</button><button data-v="20">x20</button></div></div>
+        <div class="fg"><label>Số tiền ký quỹ ($)</label><input id="tAmount" type="number" value="500" /></div>
+        <div class="fg"><label>Giá vào (để trống = giá thị trường)</label><input id="tEntry" type="number" placeholder="thị trường" /></div>
+        <div class="fg"><label>Cắt lỗ SL ($)</label><input id="tSL" type="number" placeholder="tùy chọn" /></div>
+        <div class="fg"><label>Chốt lời TP ($)</label><input id="tTP" type="number" placeholder="tùy chọn" /></div>
+      </div>
+      <button id="openTrade" class="btn-primary full">Mở lệnh</button>
+      <div id="tradeMsg" class="trade-msg"></div>
+    </section>
+
+    <!-- Lệnh đang mở -->
+    <section class="panel">
+      <div class="panel-head"><h2>Lệnh đang mở</h2><span class="muted" id="openCount">0 lệnh</span></div>
+      <div id="openList" class="trade-list"><div class="empty">Chưa có lệnh nào.</div></div>
+    </section>
+
+    <!-- Lịch sử -->
+    <section class="panel">
+      <div class="panel-head"><h2>Lịch sử & Thống kê</h2><span class="muted" id="stats"></span></div>
+      <div id="histList" class="trade-list"><div class="empty">Chưa có lịch sử.</div></div>
+    </section>
+
+    <div class="disclaimer">⚠️ Đây là <b>giao dịch giả lập (demo)</b> bằng tiền ảo, dùng giá thật để mô phỏng. Không phải giao dịch thật, không có tiền thật. Chỉ để học & thử nghiệm chiến lược.</div>
+  </div><!-- /tabTrade -->
+
   <footer class="foot">MarketAI · CoinGecko + Binance + gold-api · Gemini 2.5 Flash</footer>
 </div>
 
@@ -458,6 +538,121 @@ $("#chatText").addEventListener("keydown",e=>{if(e.key==="Enter")sendChat();});
 $("#chatClear").onclick=()=>{chatHistory=[];$("#chatBox").innerHTML=`<div class="chat-msg ai"><div class="bubble">Đã xóa. Hỏi tôi điều gì đó về thị trường.</div></div>`;};
 $("#workerInput").value=WORKER_URL;$("#keyInput").value=sessionKey;
 applyTheme();renderSeg();renderTF();loadPrices();loadChart();
+
+// ===== TABS =====
+document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{
+  document.querySelectorAll(".tab").forEach(x=>x.classList.remove("on"));
+  t.classList.add("on");
+  const tab=t.dataset.tab;
+  $("#tabAnalyze").style.display=tab==="analyze"?"block":"none";
+  $("#tabTrade").style.display=tab==="trade"?"block":"none";
+  if(tab==="trade") renderTrade();
+});
+
+// ===== TRADE DEMO (qua Worker — tự đóng SL/TP 24/7) =====
+let demo={ balance:10000, openOrders:[], history:[] };
+let tradePrices={};
+const tSel={coin:"bitcoin",type:"spot",side:"long",lev:5};
+
+function tradeApi(path,payload){
+  if(!WORKER_URL) throw new Error("NO_WORKER");
+  const base=WORKER_URL.replace(/\/$/,"");
+  return fetch(base+path, payload?{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)}:{method:"GET"})
+    .then(async r=>{const j=await r.json(); if(j.error) throw new Error(j.error); return j;});
+}
+
+function bindSeg(id,key,after){document.querySelectorAll(`#${id} button`).forEach(b=>b.onclick=()=>{
+  document.querySelectorAll(`#${id} button`).forEach(x=>x.classList.remove("on"));b.classList.add("on");
+  tSel[key]=b.dataset.v; if(after)after();});}
+bindSeg("tCoin","coin");
+bindSeg("tType","type",()=>{$("#levWrap").style.display=tSel.type==="futures"?"flex":"none";});
+bindSeg("tSide","side");
+bindSeg("tLev","lev");
+
+function curPrice(coin){return tradePrices[coin]||priceData[coin]?.price||null;}
+
+async function renderTrade(){
+  if(!WORKER_URL){
+    $("#openList").innerHTML=`<div class="err">Trade demo cần Worker URL. Mở ⚙ Settings dán Worker URL để bật tính năng tự đóng lệnh 24/7.</div>`;
+    return;
+  }
+  try{
+    const res=await tradeApi("/trade/state");
+    demo=res.wallet; tradePrices=res.prices||{};
+    drawWallet();
+  }catch(e){
+    $("#openList").innerHTML=`<div class="err">Lỗi tải ví: ${e.message}</div>`;
+  }
+}
+
+function drawWallet(){
+  let openPnl=demo.openOrders.reduce((s,o)=>s+pnlOf(o),0);
+  let histPnl=demo.history.reduce((s,o)=>s+(o.pnl||0),0);
+  const totalPnl=histPnl+openPnl;
+  $("#wBal").textContent=fmtUSD(demo.balance);
+  $("#wPnl").textContent=(totalPnl>=0?"+":"")+fmtUSD(totalPnl);
+  $("#wPnl").className=totalPnl>=0?"pnl-up":"pnl-down";
+  $("#openCount").textContent=demo.openOrders.length+" lệnh";
+  if(!demo.openOrders.length) $("#openList").innerHTML=`<div class="empty">Chưa có lệnh nào.</div>`;
+  else $("#openList").innerHTML=demo.openOrders.map(o=>{
+    const now=curPrice(o.coin); const pnl=pnlOf(o); const up=pnl>=0;
+    return `<div class="torder"><div class="torder-head"><span class="torder-sym">${o.sym}<span class="tbadge ${o.side}">${o.side}</span><span class="tbadge type">${o.type}${o.lev>1?' x'+o.lev:''}</span></span><span class="${up?'pnl-up':'pnl-down'}" style="font-size:15px">${up?'+':''}${fmtUSD(pnl)}</span></div>
+      <div class="torder-grid"><div><div class="lbl">Vào</div><div class="val">${fmtUSD(o.entry)}</div></div><div><div class="lbl">Hiện tại</div><div class="val">${fmtUSD(now)}</div></div><div><div class="lbl">Ký quỹ</div><div class="val">${fmtUSD(o.margin)}</div></div>
+      <div><div class="lbl">SL</div><div class="val" style="color:var(--red)">${o.sl?fmtUSD(o.sl):'—'}</div></div><div><div class="lbl">TP</div><div class="val" style="color:var(--green)">${o.tp?fmtUSD(o.tp):'—'}</div></div><div></div></div>
+      <button class="tclose" onclick="closeTrade(${o.id})">Đóng lệnh</button></div>`;
+  }).join("");
+  const wins=demo.history.filter(o=>(o.pnl||0)>0).length;
+  const wr=demo.history.length?Math.round(wins/demo.history.length*100):0;
+  $("#stats").textContent=demo.history.length?`${demo.history.length} lệnh · Win ${wr}% · P&L ${histPnl>=0?'+':''}${fmtUSD(histPnl)}`:"";
+  if(!demo.history.length) $("#histList").innerHTML=`<div class="empty">Chưa có lịch sử.</div>`;
+  else $("#histList").innerHTML=demo.history.slice(0,20).map(o=>{const up=(o.pnl||0)>=0;
+    const rsn=o.closeReason==="tp"?"TP":o.closeReason==="sl"?"SL":o.closeReason==="liquidated"?"Cháy":"Tay";
+    return `<div class="torder"><div class="torder-head"><span class="torder-sym">${o.sym}<span class="tbadge ${o.side}">${o.side}</span><span class="tbadge type">${o.type}${o.lev>1?' x'+o.lev:''}</span><span class="tbadge type">${rsn}</span></span><span class="${up?'pnl-up':'pnl-down'}" style="font-size:15px">${up?'+':''}${fmtUSD(o.pnl)}</span></div>
+      <div class="torder-grid"><div><div class="lbl">Vào</div><div class="val">${fmtUSD(o.entry)}</div></div><div><div class="lbl">Đóng</div><div class="val">${fmtUSD(o.closePrice)}</div></div><div><div class="lbl">Ký quỹ</div><div class="val">${fmtUSD(o.margin)}</div></div></div></div>`;
+  }).join("");
+}
+
+function pnlOf(o){
+  const now=curPrice(o.coin); if(!now)return 0;
+  const dir=o.side==="long"?1:-1;
+  return (now-o.entry)/o.entry*dir*o.margin*o.lev;
+}
+
+async function openTrade(){
+  if(!WORKER_URL){tradeMsg("Cần Worker URL (mở ⚙)","err");return;}
+  const amount=parseFloat($("#tAmount").value);
+  if(!amount||amount<=0){tradeMsg("Nhập số tiền hợp lệ","err");return;}
+  try{
+    const res=await tradeApi("/trade/open",{coin:tSel.coin,type:tSel.type,side:tSel.side,lev:tSel.lev,margin:amount,entry:$("#tEntry").value,sl:$("#tSL").value,tp:$("#tTP").value});
+    demo=res.wallet; drawWallet();
+    tradeMsg(`✓ Đã mở lệnh ${ASSETS[tSel.coin].sym} ${tSel.side.toUpperCase()}`,"ok");
+  }catch(e){tradeMsg("Lỗi: "+e.message,"err");}
+}
+async function closeTrade(id){
+  try{const res=await tradeApi("/trade/close",{id});demo=res.wallet;drawWallet();}
+  catch(e){tradeMsg("Lỗi: "+e.message,"err");}
+}
+async function resetWallet(){
+  if(!confirm("Reset ví về $10,000 và xóa hết lệnh?"))return;
+  try{const res=await tradeApi("/trade/reset",{});demo=res.wallet;drawWallet();tradeMsg("✓ Đã reset ví","ok");}
+  catch(e){tradeMsg("Lỗi: "+e.message,"err");}
+}
+function tradeMsg(m,cls){$("#tradeMsg").textContent=m;$("#tradeMsg").style.color=cls==="err"?"var(--red)":"var(--green)";setTimeout(()=>{$("#tradeMsg").textContent="";},3000);}
+
+function aiFill(){
+  const a=pipeData.tech?.assets?.[tSel.coin];
+  if(!a){tradeMsg("Chạy 'Phân tích kỹ thuật' ở tab Phân tích trước","err");return;}
+  if(a.signal==="MUA"){tSel.side="long";}else if(a.signal==="BÁN"){tSel.side="short";}
+  document.querySelectorAll("#tSide button").forEach(b=>b.classList.toggle("on",b.dataset.v===tSel.side));
+  const num=s=>{const m=(s||"").replace(/[.,]/g,"").match(/\d+/);return m?parseFloat(m[0]):null;};
+  if(a.stoploss)$("#tSL").value=num(a.stoploss)||"";
+  if(a.target)$("#tTP").value=num(a.target)||"";
+  tradeMsg(`Đã điền gợi ý: ${a.signal} ${ASSETS[tSel.coin].sym}`,"ok");
+}
+
+$("#openTrade").onclick=openTrade;
+$("#resetWallet").onclick=resetWallet;
+$("#aiFillBtn").onclick=aiFill;
 
 // ===== PWA service worker =====
 if("serviceWorker" in navigator){navigator.serviceWorker.register("service-worker.js").catch(()=>{});}
