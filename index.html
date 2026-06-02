@@ -323,16 +323,78 @@ async function callGeminiDirect(prompt,jsonOut,system){
 function parseJson(t){const c=t.replace(/```json|```/g,"").trim();const s=c.indexOf("{"),e=c.lastIndexOf("}");return JSON.parse(s!==-1?c.slice(s,e+1):c);}
 
 // ===== PRICES =====
+// WebSocket Binance: giá BTC/ETH nhảy theo từng tick (real-time)
+let priceWS=null, wsReconnect=null;
+function startPriceWS(){
+  try{ if(priceWS) priceWS.close(); }catch(e){}
+  // stream giá theo tick cho BTC + ETH
+  priceWS=new WebSocket("wss://stream.binance.com:9443/stream?streams=btcusdt@trade/ethusdt@trade");
+  priceWS.onmessage=ev=>{
+    try{
+      const m=JSON.parse(ev.data);
+      const s=m.data?.s, p=parseFloat(m.data?.p);
+      if(!s||!p)return;
+      const coin = s==="BTCUSDT"?"bitcoin" : s==="ETHUSDT"?"ethereum" : null;
+      if(!coin)return;
+      const prev=priceData[coin]?.price;
+      priceData[coin]={price:p, change24h:priceData[coin]?.change24h};
+      onTick(coin, p, prev);
+    }catch(e){}
+  };
+  priceWS.onclose=()=>{ clearTimeout(wsReconnect); wsReconnect=setTimeout(startPriceWS,3000); }; // tự kết nối lại
+  priceWS.onerror=()=>{ try{priceWS.close();}catch(e){} };
+}
+// % thay đổi 24h vẫn lấy từ REST (WS trade không có sẵn), gọi định kỳ
+async function loadChange24h(){
+  try{
+    const cg=await fetch("https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum&price_change_percentage=24h").then(r=>r.json());
+    for(const c of cg){ if(priceData[c.id]) priceData[c.id].change24h=c.price_change_percentage_24h; }
+  }catch(e){}
+}
+async function loadGold(){
+  try{ const g=await fetch("https://api.gold-api.com/price/XAU").then(r=>r.json()); priceData.gold={price:g.price,change24h:null}; updateCardPrice("gold"); }
+  catch(e){ priceData.gold=priceData.gold||{price:null,change24h:null}; }
+}
 async function loadPrices(){
+  // khởi tạo giá ban đầu (trước khi WS có tick đầu) + vàng + %24h
   try{
     const cg=await fetch("https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=bitcoin,ethereum&price_change_percentage=24h").then(r=>r.json());
     for(const c of cg) priceData[c.id]={price:c.current_price,change24h:c.price_change_percentage_24h};
-  }catch(e){console.error(e);}
-  try{
-    const g=await fetch("https://api.gold-api.com/price/XAU").then(r=>r.json());
-    priceData.gold={price:g.price,change24h:null};
-  }catch(e){priceData.gold=priceData.gold||{price:null,change24h:null};}
+  }catch(e){}
+  await loadGold();
   renderCards();
+}
+
+// Mỗi tick giá: cập nhật thẻ + P&L lệnh trade (nếu đang ở tab trade)
+let tickRAF=null;
+function onTick(coin, price, prev){
+  // cập nhật mượt qua requestAnimationFrame để không lag
+  if(tickRAF) return;
+  tickRAF=requestAnimationFrame(()=>{
+    tickRAF=null;
+    updateCardPrice("bitcoin"); updateCardPrice("ethereum");
+    if($("#tabTrade").style.display!=="none") drawWallet();
+  });
+}
+// cập nhật riêng giá 1 thẻ (không render lại toàn bộ để mượt)
+function updateCardPrice(coin){
+  const card=document.querySelector(`.card[data-asset="${coin}"]`);
+  if(!card)return;
+  const d=priceData[coin]||{};
+  const pEl=card.querySelector(".card-price");
+  if(pEl){
+    const old=pEl.dataset.v?parseFloat(pEl.dataset.v):null;
+    pEl.textContent=fmtUSD(d.price);
+    pEl.dataset.v=d.price;
+    // nhấp nháy xanh/đỏ theo hướng tick
+    if(old!=null && d.price!=null){
+      pEl.style.transition="color .15s";
+      pEl.style.color = d.price>old ? "var(--green)" : d.price<old ? "var(--red)" : "";
+      setTimeout(()=>{pEl.style.color="";},200);
+    }
+  }
+  const cEl=card.querySelector(".card-chg");
+  if(cEl && d.change24h!=null){ const up=d.change24h>=0; cEl.textContent=fmtPct(d.change24h); cEl.className="card-chg "+(up?"up":"down"); }
 }
 
 // ===== CHỈ BÁO KỸ THUẬT THẬT =====
@@ -530,6 +592,9 @@ $("#chatText").addEventListener("keydown",e=>{if(e.key==="Enter")sendChat();});
 $("#chatClear").onclick=()=>{chatHistory=[];$("#chatBox").innerHTML=`<div class="chat-msg ai"><div class="bubble">Đã xóa. Hỏi tôi điều gì đó về thị trường.</div></div>`;};
 $("#workerInput").value=WORKER_URL;$("#keyInput").value=sessionKey;
 applyTheme();renderSeg();renderTF();loadPrices();loadChart();
+startPriceWS();                          // giá real-time qua WebSocket
+setInterval(loadChange24h,30000);        // làm mới %24h mỗi 30s
+setInterval(loadGold,15000);             // làm mới giá vàng mỗi 15s (không có WS)
 
 // ===== TABS =====
 document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{
